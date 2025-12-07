@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Identity & Verifiable Credentials Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+    .highlight-box {
+      background: #e8f4f8;
+      border-left: 4px solid #0077cc;
+      padding: 12px;
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🪪 Detailed Tutorial: Understanding and Using the <code>Identity & Verifiable Credentials</code> Smart Contract</h1>
+
+  <p>This comprehensive tutorial covers the Identity & Verifiable Credentials (VC) system, a sophisticated smart contract implementing decentralized identity management, KYC badges, DID documents, and zero-knowledge proof verification on the Cardano blockchain. This system enables privacy-preserving identity verification with full on-chain credential lifecycle management.</p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-data-structures">🗃️ Data Structures</a></li>
+    <li><a href="#3-core-validator-logic">🧠 Core Validator Logic</a></li>
+    <li><a href="#4-validator-script-compilation">⚙️ Validator Script Compilation</a></li>
+    <li><a href="#5-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#6-practical-usage-example">🧪 Practical Usage Examples</a></li>
+    <li><a href="#7-testing-strategy">🧷 Testing Strategy</a></li>
+    <li><a href="#8-best-practices">✅ Best Practices</a></li>
+    <li><a href="#9-glossary-of-terms">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+
+  <h3>Plutus API Modules</h3>
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api:</strong> Provides fundamental types including <code>POSIXTime</code>, <code>PubKeyHash</code>, <code>BuiltinByteString</code>, transaction context (<code>ScriptContext</code>, <code>TxInfo</code>), and validator types.</li>
+    <li><strong>Plutus.V2.Ledger.Contexts:</strong> Contains utility functions for transaction context validation including <code>txSignedBy</code>, <code>getContinuingOutputs</code>, <code>txOutDatum</code>, and UTXO resolution.</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Supplies interval checking functions (<code>contains</code>, <code>from</code>, <code>to</code>) for time-based validation of credential expiration and issuance timing.</li>
+    <li><strong>Plutus.V1.Ledger.Value:</strong> Provides <code>valueOf</code> for extracting specific token amounts, plus <code>adaSymbol</code> and <code>adaToken</code> for ADA calculations (used in soul-bound token verification).</li>
+  </ul>
+
+  <h3>PlutusTx Modules</h3>
+  <ul>
+    <li><strong>PlutusTx:</strong> Core module enabling on-chain compilation with Template Haskell (<code>compile</code>, <code>unstableMakeIsData</code>, <code>unsafeFromBuiltinData</code>) for all data types.</li>
+    <li><strong>PlutusTx.Prelude:</strong> Plutus-compatible prelude with safe on-chain functions including list operations (<code>elem</code>, <code>any</code>, <code>null</code>, <code>length</code>) and comparison operators.</li>
+    <li><strong>PlutusTx.Builtins:</strong> Low-level builtin functions for on-chain operations, particularly <code>toBuiltin</code> for converting between Haskell and Plutus types.</li>
+  </ul>
+
+  <h3>Serialization and Encoding</h3>
+  <ul>
+    <li><strong>Codec.Serialise:</strong> CBOR serialization for compiling validators to binary format suitable for blockchain deployment.</li>
+    <li><strong>Data.ByteString modules (Lazy, Short, Strict):</strong> Handle binary data in various formats for efficient validator serialization, hashing operations, and credential data management.</li>
+  </ul>
+
+  <h3>Cardano API</h3>
+  <ul>
+    <li><strong>Cardano.Api:</strong> Provides network configuration (<code>NetworkId</code>, <code>NetworkMagic</code>), script hashing (<code>hashScript</code>), and address creation functions for testnet/mainnet deployment.</li>
+    <li><strong>Cardano.Api.Shelley:</strong> Contains Shelley-era specific types like <code>PlutusScriptSerialised</code> and address construction functions (<code>makeShelleyAddressInEra</code>) for Babbage-era addresses.</li>
+  </ul>
+
+  <h3>Standard Haskell Libraries</h3>
+  <ul>
+    <li><strong>Prelude:</strong> Basic I/O operations (<code>IO</code>, <code>putStrLn</code>), string manipulation, and file operations, imported qualified to avoid conflicts with PlutusTx.Prelude.</li>
+    <li><strong>Data.Text:</strong> Efficient text handling for address conversion and serialization operations.</li>
+  </ul>
+
+  <h2 id="2-data-structures">2. 🗃️ Data Structures</h2>
+
+  <h3><code>VCRef</code> (Verifiable Credential Reference)</h3>
+  <p>Represents an on-chain verifiable credential with privacy-preserving data hashes:</p>
+  <ul>
+    <li><strong>vcIssuer:</strong> Public key hash of the trusted authority that issued the credential</li>
+    <li><strong>vcSubject:</strong> Public key hash of the credential holder/subject</li>
+    <li><strong>vcSchemaHash:</strong> Hash of the credential schema defining its structure and validation rules</li>
+    <li><strong>vcDataHash:</strong> Hash of the actual credential data stored off-chain (preserves privacy)</li>
+    <li><strong>vcExpiry:</strong> POSIX timestamp when the credential expires and becomes invalid</li>
+    <li><strong>vcIssuedAt:</strong> POSIX timestamp of credential issuance for temporal tracking</li>
+    <li><strong>vcRevoked:</strong> Boolean flag indicating whether the credential has been revoked</li>
+    <li><strong>vcCredType:</strong> Type identifier for the credential (e.g., "KYC", "Diploma", "License")</li>
+  </ul>
+
+  <h3><code>KYCBadge</code> (Soul-Bound Token)</h3>
+  <p>Non-transferable KYC badge permanently bound to a holder's identity:</p>
+  <ul>
+    <li><strong>kycHolder:</strong> Public key hash of the badge holder (soul-bound, non-transferable)</li>
+    <li><strong>kycLevel:</strong> KYC verification level from 1 (basic) to 5 (comprehensive identity verification)</li>
+    <li><strong>kycIssuer:</strong> Public key hash of the KYC service provider who performed verification</li>
+    <li><strong>kycIssuedAt:</strong> POSIX timestamp of badge issuance</li>
+    <li><strong>kycExpiry:</strong> POSIX timestamp when the badge expires (typically annual renewal)</li>
+    <li><strong>kycJurisdiction:</strong> Geographic jurisdiction code (e.g., "US", "EU", "UK") for regulatory compliance</li>
+    <li><strong>kycRevoked:</strong> Boolean flag indicating revocation status</li>
+    <li><strong>kycMetadataRef:</strong> IPFS or Arweave reference to comprehensive off-chain KYC documentation</li>
+  </ul>
+
+  <h3><code>DIDDoc</code> (Decentralized Identifier Document)</h3>
+  <p>W3C-compatible DID document stored on-chain:</p>
+  <ul>
+    <li><strong>didController:</strong> Public key hash of the entity controlling this DID</li>
+    <li><strong>didDocHash:</strong> Hash of the complete DID document for integrity verification</li>
+    <li><strong>didPublicKeys:</strong> List of public key references for authentication and key agreement</li>
+    <li><strong>didServices:</strong> List of service endpoint references for DID-related services</li>
+    <li><strong>didCreated:</strong> POSIX timestamp of DID document creation</li>
+    <li><strong>didUpdated:</strong> POSIX timestamp of last document update for version tracking</li>
+  </ul>
+
+  <h3><code>RevocationEntry</code></h3>
+  <p>Individual entry in the on-chain revocation list:</p>
+  <ul>
+    <li><strong>revCredHash:</strong> Hash of the revoked credential for lookup and verification</li>
+    <li><strong>revRevokedAt:</strong> POSIX timestamp when revocation occurred</li>
+    <li><strong>revReason:</strong> Encoded reason for revocation (e.g., "expired", "compromised", "violation")</li>
+    <li><strong>revIssuer:</strong> Public key hash of the authority that performed the revocation</li>
+  </ul>
+
+  <h3><code>ZKGate</code> (Zero-Knowledge Proof Gate Configuration)</h3>
+  <p>Configuration for zero-knowledge proof-based access control:</p>
+  <ul>
+    <li><strong>zkRequiredCred:</strong> Required credential type for access (e.g., "KYC", "age_verification")</li>
+    <li><strong>zkMinLevel:</strong> Minimum KYC level required to pass through the gate</li>
+    <li><strong>zkProofHash:</strong> Hash of the zero-knowledge proof computed off-chain</li>
+    <li><strong>zkVerifier:</strong> Public key hash of the entity authorized to verify proofs</li>
+    <li><strong>zkAllowedIssuers:</strong> Whitelist of trusted issuer public key hashes</li>
+  </ul>
+
+  <h3><code>IdentityDatum</code></h3>
+  <p>Sum type combining all identity-related data structures:</p>
+  <ul>
+    <li><strong>CredentialDatum:</strong> Contains a <code>VCRef</code> for verifiable credential management</li>
+    <li><strong>KYCBadgeDatum:</strong> Contains a <code>KYCBadge</code> for soul-bound KYC tokens</li>
+    <li><strong>DIDDatum:</strong> Contains a <code>DIDDoc</code> for decentralized identifier documents</li>
+    <li><strong>RevocationDatum:</strong> Contains a list of <code>RevocationEntry</code> for revocation tracking</li>
+    <li><strong>ZKGateDatum:</strong> Contains a <code>ZKGate</code> for zero-knowledge access control</li>
+  </ul>
+
+  <h3><code>IdentityAction</code></h3>
+  <p>Redeemer actions defining all possible contract interactions:</p>
+  <ul>
+    <li><strong>IssueCredential:</strong> Issuer creates a new verifiable credential</li>
+    <li><strong>RevokeCredential:</strong> Issuer revokes a credential (includes reason and timestamp)</li>
+    <li><strong>IssueKYCBadge:</strong> KYC provider issues a soul-bound badge</li>
+    <li><strong>RevokeKYCBadge:</strong> KYC provider revokes a badge (includes reason)</li>
+    <li><strong>UpdateDID:</strong> DID controller updates their DID document</li>
+    <li><strong>VerifyWithZK:</strong> Verify a zero-knowledge proof for access (includes proof hash)</li>
+    <li><strong>BurnKYCBadge:</strong> Badge holder burns their own badge (account closure)</li>
+    <li><strong>AddRevocation:</strong> Add a new entry to the revocation list</li>
+  </ul>
+
+  <h2 id="3-core-validator-logic">3. 🧠 Core Validator Logic</h2>
+
+  <h3>Helper Functions</h3>
+  <ul>
+    <li><strong>isExpired:</strong> Checks if a credential or badge has passed its expiry timestamp</li>
+    <li><strong>isNotExpired:</strong> Verifies credential/badge is still within its validity period</li>
+    <li><strong>isTrustedIssuer:</strong> Validates issuer against a whitelist of trusted authorities</li>
+    <li><strong>isRevoked:</strong> Searches revocation list for a specific credential hash</li>
+    <li><strong>meetsKYCLevel:</strong> Compares actual KYC level against minimum requirement</li>
+  </ul>
+
+  <h3><code>mkValidator</code></h3>
+  <p>The main validator function implements eight distinct transaction flows:</p>
+
+  <h4>1. Issue Credential (<code>IssueCredential</code>)</h4>
+  <p><strong>Purpose:</strong> Allow trusted issuer to create a new verifiable credential.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by the credential issuer</li>
+    <li>Credential must not already be marked as revoked</li>
+    <li>Expiry timestamp must be in the future (not past)</li>
+    <li>Credential UTXO must be locked at the script address (continuing output exists)</li>
+  </ul>
+
+  <h4>2. Revoke Credential (<code>RevokeCredential</code>)</h4>
+  <p><strong>Purpose:</strong> Allow issuer to revoke a previously issued credential.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Only the original issuer can revoke (signature verification)</li>
+    <li>Credential must not already be revoked</li>
+    <li>Continuing output must mark credential as revoked</li>
+    <li>Revocation entry must be added to the revocation list</li>
+  </ul>
+
+  <h4>3. Issue KYC Badge (<code>IssueKYCBadge</code>)</h4>
+  <p><strong>Purpose:</strong> KYC provider issues a soul-bound (non-transferable) badge.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by the KYC issuer</li>
+    <li>KYC level must be valid (between 1 and 5 inclusive)</li>
+    <li>Badge must not be marked as revoked</li>
+    <li>Badge must be locked to holder (soul-bound, continuing output required)</li>
+  </ul>
+
+  <h4>4. Revoke KYC Badge (<code>RevokeKYCBadge</code>)</h4>
+  <p><strong>Purpose:</strong> KYC provider revokes a badge due to violations or expiry.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Only the KYC issuer can revoke the badge</li>
+    <li>Badge must not already be revoked</li>
+    <li>Continuing output must mark badge as revoked</li>
+  </ul>
+
+  <h4>5. Update DID Document (<code>UpdateDID</code>)</h4>
+  <p><strong>Purpose:</strong> DID controller updates their decentralized identifier document.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by the DID controller</li>
+    <li>DID document hash must be different in continuing output (actual update occurred)</li>
+    <li>Updated timestamp must be greater than previous timestamp (monotonic increase)</li>
+  </ul>
+
+  <h4>6. Verify with Zero-Knowledge Proof (<code>VerifyWithZK</code>)</h4>
+  <p><strong>Purpose:</strong> Verify a zero-knowledge proof for privacy-preserving access control.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Provided proof hash must match the gate's expected proof hash</li>
+    <li>Transaction must be signed by the authorized verifier</li>
+    <li>Gate UTXO must be consumed (no continuing output) after verification</li>
+  </ul>
+
+  <h4>7. Burn KYC Badge (<code>BurnKYCBadge</code>)</h4>
+  <p><strong>Purpose:</strong> Badge holder voluntarily destroys their badge (account closure).</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by the badge holder (not issuer)</li>
+    <li>Badge UTXO must be consumed completely (no continuing output)</li>
+  </ul>
+
+  <h4>8. Add Revocation Entry (<code>AddRevocation</code>)</h4>
+  <p><strong>Purpose:</strong> Add a new entry to the on-chain revocation list.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by the revocation entry's issuer</li>
+    <li>Continuing output must contain the updated revocation list with new entry</li>
+    <li>List length must increase by exactly one entry</li>
+  </ul>
+
+  <div class="highlight-box">
+    <strong>🔒 Security Note:</strong> All validation paths enforce strict authorization checks through signature verification, preventing unauthorized credential manipulation or identity theft.
+  </div>
+
+  <h2 id="4-validator-script-compilation">4. ⚙️ Validator Script Compilation</h2>
+
+  <h3><code>mkValidatorUntyped</code></h3>
+  <p>Wraps the typed validator function for compatibility with Plutus on-chain execution using <code>BuiltinData</code>. This untyped wrapper:</p>
+  <ul>
+    <li>Deserializes datum (<code>IdentityDatum</code>) from raw builtin data</li>
+    <li>Deserializes redeemer (<code>IdentityAction</code>) from raw builtin data</li>
+    <li>Deserializes script context from raw builtin data</li>
+    <li>Calls the typed <code>mkValidator</code> function with deserialized parameters</li>
+    <li>Returns <code>()</code> on successful validation or triggers an error on failure</li>
+  </ul>
+
+  <h3><code>validator</code></h3>
+  <p>Compiles the untyped validator using Template Haskell's <code>compile</code> splice into a Plutus Core script ready for blockchain deployment. Uses <code>mkValidatorScript</code> to wrap the compiled code into a proper <code>Validator</code> type.</p>
+
+  <h2 id="5-helper-functions">5. 🔧 Helper Functions</h2>
+
+  <h3>Script Hash and Address Generation</h3>
+  <ul>
+    <li><strong><code>plutusValidatorHash</code>:</strong> Computes the on-chain validator hash. Serializes the validator, converts through ShortByteString → ByteString → BuiltinByteString, and wraps in <code>ValidatorHash</code>.</li>
+    <li><strong><code>plutusScriptAddress</code>:</strong> Generates the Plutus script address with <code>ScriptCredential</code> and no stake address, used for on-chain address representation.</li>
+  </ul>
+
+  <h3>Bech32 Address Generation</h3>
+  <ul>
+    <li><strong><code>toBech32ScriptAddress</code>:</strong> Generates the validator script's human-readable Bech32 address for CLI and wallet integration. Serializes validator, creates <code>PlutusScriptV2</code>, hashes it, and constructs a Babbage-era address.</li>
+  </ul>
+
+  <h3>File Operations</h3>
+  <ul>
+    <li><strong><code>writeValidator</code>:</strong> Writes the compiled validator script to <code>identity.plutus</code> file in CBOR format for deployment.</li>
+  </ul>
+
+  <h3>Main Function</h3>
+  <ul>
+    <li><strong><code>main</code>:</strong> Orchestrates validator compilation, file writing, and comprehensive information display. Sets up testnet configuration, generates addresses, and prints detailed system documentation.</li>
+  </ul>
+
+  <h2 id="6-practical-usage-example">6. 🧪 Practical Usage Examples</h2>
+
+  <h3>Deploying the Contract</h3>
+  <pre><code>-- Compile and generate validator
+stack run  -- or cabal run
+
+-- Output includes:
+-- - identity.plutus file
+-- - Validator hash
+-- - Plutus script address
+-- - Bech32 testnet address
+-- - Comprehensive feature documentation
+</code></pre>
+
+  <h3>Verifiable Credential Workflow</h3>
+  <pre><code>-- Step 1: University issues diploma credential
+-- Create VCRef with:
+--   - Issuer: University PKH
+--   - Subject: Graduate PKH
+--   - SchemaHash: "diploma_schema_v1"
+--   - DataHash: hash(off-chain diploma data)
+--   - Expiry: Never (or 10 years)
+--   - CredType: "Diploma"
+
+-- Step 2: Lock credential at script address
+-- Action: IssueCredential
+-- Signed by: University
+
+-- Step 3: Graduate presents credential (Reference Input)
+-- Verifier reads UTXO without spending
+-- Checks: issuer signature, not revoked, not expired
+
+-- Step 4: If needed, university revokes
+-- Action: RevokeCredential "academic_misconduct" timestamp
+-- Updates credential datum: vcRevoked = True
+-- Adds to revocation list
+</code></pre>
+
+  <h3>KYC Badge (Soul-Bound Token) Workflow</h3>
+  <pre><code>-- Step 1: KYC provider performs verification
+-- Collects documents, verifies identity
+-- Determines appropriate level (1-5)
+
+-- Step 2: Issue KYC badge
+-- Create KYCBadge with:
+--   - Holder: User PKH (soul-bound)
+--   - Level: 3 (standard verification)
+--   - Issuer: KYC Provider PKH
+--   - Jurisdiction: "US"
+--   - Expiry: 1 year from now
+--   - MetadataRef: IPFS hash of documents
+
+-- Step 3: Lock badge at script address
+-- Action: IssueKYCBadge
+-- Badge is non-transferable (soul-bound)
+
+-- Step 4: User presents badge for DeFi access
+-- DeFi protocol reads badge as reference input
+-- Verifies: level >= required, not revoked, not expired
+
+-- Step 5a: Annual renewal
+-- KYC provider issues new badge after re-verification
+
+-- Step 5b: User closes account
+-- Action: BurnKYCBadge
+-- Signed by holder (user)
+-- Badge UTXO consumed completely
+</code></pre>
+
+  <h3>DID Document Management</h3>
+  <pre><code>-- Step 1: Create DID document
+-- Create DIDDoc with:
+--   - Controller: User PKH
+--   - DocHash: hash(complete DID document)
+--   - PublicKeys: [key_ref_1, key_ref_2]
+--   - Services: [service_endpoint_1]
+--   - Created: current timestamp
+
+-- Step 2: Update DID (add new service)
+-- Action: UpdateDID
+-- New DocHash reflects changes
+-- Updated timestamp incremented
+-- Signed by controller
+
+-- Step 3: Applications resolve DID
+-- Read DIDDoc as reference input
+-- Fetch full document from IPFS using DocHash
+-- Verify integrity and controller signature
+</code></pre>
+
+  <h3>Zero-Knowledge Proof Gate</h3>
+  <pre><code>-- Step 1: Configure ZK gate
+-- Create ZKGate with:
+--   - RequiredCred: "age_verification"
+--   - MinLevel: 2
+--   - AllowedIssuers: [trusted_issuer_1, trusted_issuer_2]
+
+-- Step 2: User generates ZK proof off-chain
+-- Proves: "I have KYC level >= 2 from trusted issuer"
+-- Without revealing: specific level, issuer, or identity
+-- Proof hash: hash(zk_proof)
+
+-- Step 3: Submit proof for verification
+-- Action: VerifyWithZK proof_hash
+-- Gate validates proof hash matches
+-- Signed by authorized verifier
+-- Gate consumed (access granted)
+
+-- Step 4: User gains access
+-- Without revealing specific credential details
+-- Privacy-preserving selective disclosure
+</code></pre>
+
+  <h2 id="7-testing-strategy">7. 🧷 Testing Strategy</h2>
+
+  <h3>Credential Lifecycle Testing</h3>
+  <ul>
+    <li>Test credential issuance with valid issuer signature</li>
+    <li>Test credential issuance fails without issuer signature</li>
+    <li>Verify expiry checks at boundary conditions</li>
+    <li>Test credential revocation by original issuer</li>
+    <li>Test revocation fails when credential already revoked</li>
+    <li>Verify revocation list updates correctly</li>
+    <li>Test unauthorized revocation attempts (wrong issuer)</li>
+  </ul>
+
+  <h3>KYC Badge Testing</h3>
+  <ul>
+    <li>Test badge issuance with valid levels (1-5)</li>
+    <li>Test badge issuance fails with invalid levels (0, 6, -1)</li>
+    <li>Verify badge is soul-bound (continuing output required)</li>
+    <li>Test badge revocation by KYC provider</li>
+    <li>Test badge burning by holder</li>
+    <li>Verify unauthorized burn attempts fail</li>
+    <li>Test badge expiry validation</li>
+    <li>Verify jurisdiction-specific badges</li>
+  </ul>
+
+  <h3>DID Document Testing</h3>
+  <ul>
+    <li>Test DID document creation with controller signature</li>
+    <li>Test unauthorized DID updates (wrong controller)</li>
+    <li>Verify document hash changes on update</li>
+    <li>Verify timestamp monotonic increase</li>
+    <li>Test DID updates with public key changes</li>
+    <li>Test service endpoint additions/removals</li>
+  </ul>
+
+  <h3>Zero-Knowledge Gate Testing</h3>
+  <ul>
+    <li>Test ZK proof verification with correct proof hash</li>
+    <li>Test verification fails with incorrect proof hash</li>
+    <li>Verify gate consumption after successful verification</li>
+    <li>Test trusted issuer whitelist validation</li>
+    <li>Test minimum KYC level requirements</li>
+    <li>Verify unauthorized verifier attempts fail</li>
+  </ul>
+
+  <h3>Revocation List Testing</h3>
+  <ul>
+    <li>Test adding entries to revocation list</li>
+    <li>Verify list length increases correctly</li>
+    <li>Test revocation lookup functionality</li>
+    <li>Verify timestamp and reason tracking</li>
+    <li>Test unauthorized revocation list modifications</li>
+  </ul>
+
+  <h3>Security Testing</h3>
+  <ul>
+    <li>Test signature verification for all actions</li>
+    <li>Verify proper authorization boundaries</li>
+    <li>Test double-spending prevention</li>
+    <li>Verify credential substitution attacks fail</li>
+    <li>Test timing attacks on expiry boundaries</li>
+    <li>Verify privacy-preserving properties of ZK proofs</li>
+  </ul>
+
+  <h2 id="8-best-practices">8. ✅ Best Practices</h2>
+
+  <h3>Smart Contract Development</h3>
+  <ul>
+    <li>Use descriptive <code>traceIfFalse</code> messages for debugging</li>
+    <li>Implement strict signature verification for all privileged actions</li>
+    <li>Use continuing outputs to maintain state across transactions</li>
+    <li>Validate all temporal logic (expiry, issuance dates) carefully</li>
+    <li>Test boundary conditions extensively (expiry timestamps, level limits)</li>
+    <li>Consider gas costs when designing revocation list updates</li>
+  </ul>
+
+  <h3>Security Considerations</h3>
+  <ul>
+    <li>Always verify issuer signatures to prevent forgery</li>
+    <li>Implement proper access control for each action type</li>
+    <li>Use cryptographic hashes for data integrity</li>
+    <li>Store sensitive data off-chain, only hashes on-chain</li>
+    <li>Implement revocation checking in all credential verifications</li>
+    <li>Protect against replay attacks with timestamps</li>
+    <li>Ensure soul-bound tokens cannot be transferred</li>
+    <li>Validate ZK proofs against trusted issuer lists</li>
+  </ul>
+
+  <h3>Privacy Best Practices</h3>
+  <ul>
+    <li>Store minimal data on-chain (use hashes and references)</li>
+    <li>Implement selective disclosure with ZK proofs</li>
+    <li>Use reference inputs for credential verification (no spending)</li>
+    <li>Keep sensitive KYC data off-chain (IPFS/Arweave)</li>
+    <li>Allow users to control their credential presentation</li>
+    <li>Implement credential holder privacy protections</li>
+  </ul>
+
+  <h3>User Experience</h3>
+  <ul>
+    <li>Build intuitive credential wallet interface</li>
+    <li>Display credential status clearly (valid, expired, revoked)</li>
+    <li>Show expiry countdowns for time-sensitive credentials</li>
+    <li>Implement QR code generation

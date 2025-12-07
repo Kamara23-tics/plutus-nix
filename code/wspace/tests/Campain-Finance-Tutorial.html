@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Campaign Finance Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+    .highlight-box {
+      background: #e8f4f8;
+      border-left: 4px solid #0077cc;
+      padding: 12px;
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🗳️ Detailed Tutorial: Understanding and Using the <code>Campaign Finance</code> Smart Contract</h1>
+
+  <p>This comprehensive tutorial covers the Campaign Finance smart contract system, implementing transparent political campaign funding with milestone-based grants, spending limits, and immutable audit trails on the Cardano blockchain. This system ensures accountability, transparency, and proper fund management for political campaigns and grant programs.</p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-data-structures">🗃️ Data Structures</a></li>
+    <li><a href="#3-core-validator-logic">🧠 Core Validator Logic</a></li>
+    <li><a href="#4-validator-script-compilation">⚙️ Validator Script Compilation</a></li>
+    <li><a href="#5-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#6-practical-usage-example">🧪 Practical Usage Examples</a></li>
+    <li><a href="#7-testing-strategy">🧷 Testing Strategy</a></li>
+    <li><a href="#8-best-practices">✅ Best Practices</a></li>
+    <li><a href="#9-glossary-of-terms">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+
+  <h3>Plutus API Modules</h3>
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api:</strong> Provides fundamental types including <code>POSIXTime</code>, <code>PubKeyHash</code>, <code>BuiltinByteString</code>, transaction context (<code>ScriptContext</code>, <code>TxInfo</code>), and validator construction types.</li>
+    <li><strong>Plutus.V2.Ledger.Contexts:</strong> Contains utility functions for transaction context validation including <code>txSignedBy</code>, <code>getContinuingOutputs</code>, <code>findOwnInput</code>, <code>valuePaidTo</code>, and <code>txOutDatum</code>.</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Supplies interval checking functions (<code>contains</code>, <code>from</code>) for time-based validation of milestone deadlines and campaign timing.</li>
+    <li><strong>Plutus.V1.Ledger.Value:</strong> Provides <code>valueOf</code> for extracting specific token amounts, plus <code>adaSymbol</code> and <code>adaToken</code> for ADA calculations in donations and disbursements.</li>
+  </ul>
+
+  <h3>PlutusTx Modules</h3>
+  <ul>
+    <li><strong>PlutusTx:</strong> Core module enabling on-chain compilation with Template Haskell (<code>compile</code>, <code>unstableMakeIsData</code>, <code>unsafeFromBuiltinData</code>) for all data types.</li>
+    <li><strong>PlutusTx.Prelude:</strong> Plutus-compatible prelude with safe on-chain functions including list operations (<code>foldr</code>, <code>length</code>, <code>!!</code>), comparison operators, and control flow.</li>
+    <li><strong>PlutusTx.Builtins:</strong> Low-level builtin functions for on-chain operations, particularly <code>toBuiltin</code> for converting between Haskell and Plutus types.</li>
+  </ul>
+
+  <h3>Serialization and Encoding</h3>
+  <ul>
+    <li><strong>Codec.Serialise:</strong> CBOR serialization for compiling validators to binary format suitable for blockchain deployment.</li>
+    <li><strong>Data.ByteString modules (Lazy, Short, Strict):</strong> Handle binary data in various formats for efficient validator serialization, hashing operations, and report verification.</li>
+  </ul>
+
+  <h3>Cardano API</h3>
+  <ul>
+    <li><strong>Cardano.Api:</strong> Provides network configuration (<code>NetworkId</code>, <code>NetworkMagic</code>), script hashing (<code>hashScript</code>), and address creation functions for testnet/mainnet deployment.</li>
+    <li><strong>Cardano.Api.Shelley:</strong> Contains Shelley-era specific types like <code>PlutusScriptSerialised</code> and address construction functions (<code>makeShelleyAddressInEra</code>) for Babbage-era addresses.</li>
+  </ul>
+
+  <h3>Standard Haskell Libraries</h3>
+  <ul>
+    <li><strong>Prelude:</strong> Basic I/O operations (<code>IO</code>, <code>putStrLn</code>), string manipulation, and file operations, imported qualified to avoid conflicts with PlutusTx.Prelude.</li>
+    <li><strong>Data.Text:</strong> Efficient text handling for address conversion and serialization operations.</li>
+  </ul>
+
+  <h2 id="2-data-structures">2. 🗃️ Data Structures</h2>
+
+  <h3><code>Milestone</code></h3>
+  <p>Represents a single milestone within a grant program:</p>
+  <ul>
+    <li><strong>mAmount:</strong> Payment amount for this milestone in lovelace (1 ADA = 1,000,000 lovelace)</li>
+    <li><strong>mReportHash:</strong> Required report hash that must be submitted before funds release</li>
+    <li><strong>mDeadline:</strong> POSIX timestamp deadline for milestone completion</li>
+    <li><strong>mCompleted:</strong> Boolean flag indicating whether the milestone has been completed</li>
+  </ul>
+
+  <h3><code>Grant</code></h3>
+  <p>Represents a grant program with milestone-based disbursement:</p>
+  <ul>
+    <li><strong>gRecipient:</strong> Public key hash of the grant recipient who receives milestone payments</li>
+    <li><strong>gTotalAmount:</strong> Total grant amount in lovelace (sum of all milestone amounts)</li>
+    <li><strong>gMilestones:</strong> List of milestones defining the disbursement schedule</li>
+    <li><strong>gCurrentPhase:</strong> Current milestone index (0-based) tracking progress</li>
+    <li><strong>gTotalReleased:</strong> Cumulative amount released so far across all completed milestones</li>
+    <li><strong>gDescription:</strong> Grant description or reference identifier</li>
+  </ul>
+
+  <h3><code>Campaign</code></h3>
+  <p>Campaign treasury configuration with spending controls:</p>
+  <ul>
+    <li><strong>cTreasurer:</strong> Public key hash of the campaign treasurer authorized to manage funds</li>
+    <li><strong>cPerTxLimit:</strong> Maximum spending allowed per single transaction in lovelace</li>
+    <li><strong>cTotalLimit:</strong> Total campaign spending limit/budget in lovelace</li>
+    <li><strong>cDisclosureRef:</strong> IPFS or Arweave reference to campaign disclosure documents</li>
+    <li><strong>cTotalSpent:</strong> Running total of all campaign spending for budget tracking</li>
+    <li><strong>cTotalDonations:</strong> Running total of all donations received</li>
+    <li><strong>cActive:</strong> Boolean flag indicating whether the campaign is currently active</li>
+  </ul>
+
+  <h3><code>DonorRecord</code></h3>
+  <p>Immutable record of a single donation for transparency:</p>
+  <ul>
+    <li><strong>drDonor:</strong> Public key hash of the donor</li>
+    <li><strong>drAmount:</strong> Donation amount in lovelace</li>
+    <li><strong>drTimestamp:</strong> POSIX timestamp when donation was made</li>
+  </ul>
+
+  <h3><code>CampaignDatum</code></h3>
+  <p>Combined datum containing all campaign state:</p>
+  <ul>
+    <li><strong>cdCampaign:</strong> The <code>Campaign</code> configuration and current state</li>
+    <li><strong>cdGrants:</strong> List of all <code>Grant</code> programs under this campaign</li>
+    <li><strong>cdDonors:</strong> Immutable list of <code>DonorRecord</code> entries forming an audit trail</li>
+  </ul>
+
+  <h3><code>CampaignAction</code></h3>
+  <p>Redeemer actions defining all possible contract interactions:</p>
+  <ul>
+    <li><strong>Donate:</strong> Anyone can donate to the campaign (includes timestamp)</li>
+    <li><strong>DisburseOperational:</strong> Treasurer disburses funds for operational expenses (includes amount)</li>
+    <li><strong>CreateGrant:</strong> Treasurer creates a new grant program (includes <code>Grant</code> details)</li>
+    <li><strong>ReleaseMilestone:</strong> Release milestone payment (includes grant index and report hash)</li>
+    <li><strong>UpdateDisclosure:</strong> Update campaign disclosure document reference</li>
+    <li><strong>CloseCampaign:</strong> Treasurer closes the campaign (no further operations allowed)</li>
+  </ul>
+
+  <h2 id="3-core-validator-logic">3. 🧠 Core Validator Logic</h2>
+
+  <h3>Helper Functions</h3>
+  <ul>
+    <li><strong>findGrant:</strong> Safely retrieves a grant by index from the grant list</li>
+    <li><strong>updateGrantAt:</strong> Updates a specific grant at a given index in the list</li>
+    <li><strong>getCurrentMilestone:</strong> Gets the current active milestone for a grant</li>
+    <li><strong>updateMilestoneAt:</strong> Marks a specific milestone as completed</li>
+    <li><strong>totalDonations:</strong> Calculates sum of all donations from donor records</li>
+    <li><strong>milestonePastDeadline:</strong> Checks if a milestone has exceeded its deadline</li>
+  </ul>
+
+  <h3><code>mkValidator</code></h3>
+  <p>The main validator function implements six distinct transaction flows:</p>
+
+  <h4>1. Donate (<code>Donate timestamp</code>)</h4>
+  <p><strong>Purpose:</strong> Allow anyone to contribute funds to the campaign.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Campaign must be active (not closed)</li>
+    <li>Donation must actually increase the UTXO value at script address</li>
+    <li>New donor record must be added to the immutable audit trail</li>
+    <li>Campaign's total donations counter must be incremented correctly</li>
+  </ul>
+
+  <h4>2. Disburse Operational (<code>DisburseOperational amount</code>)</h4>
+  <p><strong>Purpose:</strong> Allow treasurer to spend funds for campaign operations.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Campaign must be active</li>
+    <li>Transaction must be signed by the campaign treasurer</li>
+    <li>Amount must not exceed per-transaction spending limit</li>
+    <li>Amount must not cause total spending to exceed campaign budget</li>
+    <li>Treasurer must receive the specified amount in the transaction</li>
+    <li>Campaign's total spent counter must be updated with the new amount</li>
+  </ul>
+
+  <h4>3. Create Grant (<code>CreateGrant grant</code>)</h4>
+  <p><strong>Purpose:</strong> Allow treasurer to establish a new milestone-based grant.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Campaign must be active</li>
+    <li>Transaction must be signed by the campaign treasurer</li>
+    <li>Grant total amount must fit within remaining campaign budget</li>
+    <li>Grant must be added to the campaign's grant list</li>
+    <li>Milestone structure must be valid (sum of milestones equals grant total, at least one milestone)</li>
+  </ul>
+
+  <h4>4. Release Milestone (<code>ReleaseMilestone grantIdx reportHash</code>)</h4>
+  <p><strong>Purpose:</strong> Release milestone payment after report submission.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Campaign must be active</li>
+    <li>Transaction must be signed by the campaign treasurer</li>
+    <li>Grant index must be valid (within bounds of grant list)</li>
+    <li>Submitted report hash must match the milestone's required report hash</li>
+    <li>Milestone must not already be marked as completed</li>
+    <li>Current time must be before the milestone deadline</li>
+    <li>Grant recipient must receive the milestone amount</li>
+    <li>Milestone must be marked as completed in continuing output</li>
+    <li>Grant's total released and current phase must be updated correctly</li>
+  </ul>
+
+  <h4>5. Update Disclosure (<code>UpdateDisclosure newRef</code>)</h4>
+  <p><strong>Purpose:</strong> Allow treasurer to update campaign disclosure documents.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by the campaign treasurer</li>
+    <li>Campaign's disclosure reference must be updated in continuing output</li>
+  </ul>
+
+  <h4>6. Close Campaign (<code>CloseCampaign</code>)</h4>
+  <p><strong>Purpose:</strong> Treasurer closes campaign, preventing further operations.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by the campaign treasurer</li>
+    <li>Campaign must be marked as inactive (cActive = False) in continuing output</li>
+  </ul>
+
+  <div class="highlight-box">
+    <strong>🔒 Transparency Note:</strong> All donations are permanently recorded in an immutable audit trail. The donor list is append-only, ensuring complete transparency and preventing retroactive modifications of the funding record.
+  </div>
+
+  <h2 id="4-validator-script-compilation">4. ⚙️ Validator Script Compilation</h2>
+
+  <h3><code>mkValidatorUntyped</code></h3>
+  <p>Wraps the typed validator function for compatibility with Plutus on-chain execution using <code>BuiltinData</code>. This untyped wrapper:</p>
+  <ul>
+    <li>Deserializes datum (<code>CampaignDatum</code>) from raw builtin data</li>
+    <li>Deserializes redeemer (<code>CampaignAction</code>) from raw builtin data</li>
+    <li>Deserializes script context from raw builtin data</li>
+    <li>Calls the typed <code>mkValidator</code> function with deserialized parameters</li>
+    <li>Returns <code>()</code> on successful validation or triggers an error on failure</li>
+  </ul>
+
+  <h3><code>validator</code></h3>
+  <p>Compiles the untyped validator using Template Haskell's <code>compile</code> splice into a Plutus Core script ready for blockchain deployment. Uses <code>mkValidatorScript</code> to wrap the compiled code into a proper <code>Validator</code> type.</p>
+
+  <h2 id="5-helper-functions">5. 🔧 Helper Functions</h2>
+
+  <h3>Script Hash and Address Generation</h3>
+  <ul>
+    <li><strong><code>plutusValidatorHash</code>:</strong> Computes the on-chain validator hash. Serializes the validator, converts through ShortByteString → ByteString → BuiltinByteString, and wraps in <code>ValidatorHash</code>.</li>
+    <li><strong><code>plutusScriptAddress</code>:</strong> Generates the Plutus script address with <code>ScriptCredential</code> and no stake address, used for on-chain address representation.</li>
+  </ul>
+
+  <h3>Bech32 Address Generation</h3>
+  <ul>
+    <li><strong><code>toBech32ScriptAddress</code>:</strong> Generates the validator script's human-readable Bech32 address for CLI and wallet integration. Serializes validator, creates <code>PlutusScriptV2</code>, hashes it, and constructs a Babbage-era address.</li>
+  </ul>
+
+  <h3>File Operations</h3>
+  <ul>
+    <li><strong><code>writeValidator</code>:</strong> Writes the compiled validator script to <code>campaign-finance.plutus</code> file in CBOR format for deployment.</li>
+  </ul>
+
+  <h3>Main Function</h3>
+  <ul>
+    <li><strong><code>main</code>:</strong> Orchestrates validator compilation, file writing, and information display. Sets up testnet configuration, generates addresses, and prints comprehensive feature documentation.</li>
+  </ul>
+
+  <h2 id="6-practical-usage-example">6. 🧪 Practical Usage Examples</h2>
+
+  <h3>Deploying the Contract</h3>
+  <pre><code>-- Compile and generate validator
+stack run  -- or cabal run
+
+-- Output includes:
+-- - campaign-finance.plutus file
+-- - Validator hash
+-- - Plutus script address
+-- - Bech32 testnet address
+-- - Feature summary
+</code></pre>
+
+  <h3>Complete Campaign Workflow</h3>
+  <pre><code>-- Step 1: Initialize campaign
+-- Create CampaignDatum with:
+--   - Treasurer: Campaign manager PKH
+--   - PerTxLimit: 10,000 ADA (10,000,000,000 lovelace)
+--   - TotalLimit: 1,000,000 ADA total budget
+--   - DisclosureRef: IPFS hash of disclosure docs
+--   - Empty grants and donors lists
+--   - Active: true
+
+-- Step 2: Donors contribute
+-- Action: Donate current_timestamp
+-- Signed by: Donor
+-- Increases UTXO value at script
+-- Adds donor record to immutable trail
+
+-- Step 3: Treasurer creates grant
+-- Action: CreateGrant with:
+--   - Recipient: Research team PKH
+--   - TotalAmount: 50,000 ADA
+--   - Milestones: [
+--       {amount: 15000 ADA, reportHash: "initial_report", deadline: +30 days},
+--       {amount: 20000 ADA, reportHash: "progress_report", deadline: +90 days},
+--       {amount: 15000 ADA, reportHash: "final_report", deadline: +180 days}
+--     ]
+-- Grant added to campaign grant list
+
+-- Step 4: Release milestones progressively
+-- Action: ReleaseMilestone 0 "initial_report"
+-- Verifies report hash matches
+-- Checks deadline not passed
+-- Pays recipient milestone amount
+-- Marks milestone complete, advances phase
+
+-- Step 5: Operational spending
+-- Action: DisburseOperational 5000 ADA
+-- Checks per-tx and total limits
+-- Pays treasurer
+-- Updates total spent counter
+
+-- Step 6: Campaign ends
+-- Action: CloseCampaign
+-- Marks campaign inactive
+-- No further operations allowed
+</code></pre>
+
+  <h3>Donor Transparency Example</h3>
+  <pre><code>-- Query campaign UTXO datum
+-- Extract cdDonors list
+-- For each DonorRecord:
+--   - drDonor: donor public key hash
+--   - drAmount: contribution amount
+--   - drTimestamp: when donated
+
+-- Build transparency dashboard:
+{
+  "total_donors": 1247,
+  "total_donations": "845000 ADA",
+  "donations": [
+    {"donor": "addr1...", "amount": "1000 ADA", "date": "2025-01-15"},
+    {"donor": "addr1...", "amount": "500 ADA", "date": "2025-01-16"},
+    ...
+  ]
+}
+</code></pre>
+
+  <h2 id="7-testing-strategy">7. 🧷 Testing Strategy</h2>
+
+  <h3>Donation Testing</h3>
+  <ul>
+    <li>Test donations with various amounts</li>
+    <li>Verify donor records are appended correctly</li>
+    <li>Test donation total updates accurately</li>
+    <li>Verify donations to inactive campaigns fail</li>
+    <li>Test multiple donations from same donor</li>
+    <li>Verify UTXO value increases correctly</li>
+  </ul>
+
+  <h3>Operational Disbursement Testing</h3>
+  <ul>
+    <li>Test disbursements within per-tx limit</li>
+    <li>Test disbursements exceeding per-tx limit (should fail)</li>
+    <li>Test disbursements within total budget</li>
+    <li>Test disbursements exceeding total budget (should fail)</li>
+    <li>Verify treasurer signature requirement</li>
+    <li>Test spending counter updates correctly</li>
+    <li>Verify unauthorized disbursement attempts fail</li>
+  </ul>
+
+  <h3>Grant Creation Testing</h3>
+  <ul>
+    <li>Test grant creation with valid milestone structure</li>
+    <li>Test grants with milestone sums not matching total (should fail)</li>
+    <li>Test grants with zero milestones (should fail)</li>
+    <li>Test grants exceeding remaining budget (should fail)</li>
+    <li>Verify grant is added to list correctly</li>
+    <li>Test multiple grants under one campaign</li>
+  </ul>
+
+  <h3>Milestone Release Testing</h3>
+  <ul>
+    <li>Test milestone release with correct report hash</li>
+    <li>Test milestone release with wrong report hash (should fail)</li>
+    <li>Test release before deadline (should succeed)</li>
+    <li>Test release after deadline (should fail)</li>
+    <li>Test releasing already completed milestone (should fail)</li>
+    <li>Test invalid grant index (should fail)</li>
+    <li>Verify recipient receives correct amount</li>
+    <li>Verify phase advancement and total released updates</li>
+    <li>Test sequential milestone releases</li>
+  </ul>
+
+  <h3>Campaign Lifecycle Testing</h3>
+  <ul>
+    <li>Test disclosure updates by treasurer</li>
+    <li>Test unauthorized disclosure updates (should fail)</li>
+    <li>Test campaign closure</li>
+    <li>Test operations on closed campaign (should fail)</li>
+    <li>Verify complete campaign lifecycle from creation to closure</li>
+  </ul>
+
+  <h3>Edge Cases</h3>
+  <ul>
+    <li>Test with maximum per-tx limit</li>
+    <li>Test with many grants (list handling)</li>
+    <li>Test with long donor lists (gas considerations)</li>
+    <li>Test milestone at exact deadline boundary</li>
+    <li>Test with zero amount operations</li>
+    <li>Test concurrent transactions on same UTXO</li>
+  </ul>
+
+  <h2 id="8-best-practices">8. ✅ Best Practices</h2>
+
+  <h3>Smart Contract Development</h3>
+  <ul>
+    <li>Use descriptive <code>traceIfFalse</code> messages for debugging</li>
+    <li>Implement comprehensive authorization checks for all privileged actions</li>
+    <li>Use continuing outputs to maintain state across transactions</li>
+    <li>Validate all numeric operations to prevent overflow/underflow</li>
+    <li>Test boundary conditions extensively (limits, deadlines, indices)</li>
+    <li>Consider gas costs when managing large lists (donors, grants)</li>
+  </ul>
+
+  <h3>Security Considerations</h3>
+  <ul>
+    <li>Always verify treasurer signature for privileged operations</li>
+    <li>Enforce spending limits at both per-transaction and total levels</li>
+    <li>Use immutable donor records to prevent audit trail tampering</li>
+    <li>Validate grant and milestone structures before creation</li>
+    <li>Implement proper deadline checking to prevent late releases</li>
+    <li>Verify report hashes to ensure milestone completion requirements</li>
+    <li>Prevent operations on closed campaigns</li>
+    <li>Use cryptographic hashes for report verification</li>
+  </ul>
+
+  <h3>Transparency Best Practices</h3>
+  <ul>
+    <li>Maintain complete, append-only donor records</li>
+    <li>Store disclosure documents in permanent storage (IPFS/Arweave)</li>
+    <li>Provide real-time spending and donation dashboards</li>
+    <li>Display milestone progress publicly</li>
+    <li>Enable anyone to verify report hashes</li>
+    <li>Publish regular campaign updates via disclosure references</li>
+    <li>Allow easy auditing of all transactions</li>
+  </ul>
+
+  <h3>User Experience</h3>
+  <ul>
+    <li>Build intuitive donation interface with clear receipt generation</li>
+    <li>Display current spending vs budget in real-time</li>
+    <li>Show milestone progress bars for each grant</li>
+    <li>Provide donor breakdown and statistics</li>
+    <li>Enable easy access to disclosure documents</li>
+    <li>Implement notification system for milestone releases</li>
+    <li>Create public audit trail viewer</li>
+    <li>Display remaining budget and per-tx limits clearly</li>
+  </ul>
+
+  <h3>Integration Tips</h3>
+  <ul>
+    <li>Use reference inputs for read-only campaign data access</li>
+    <li>Cache frequently accessed data to reduce blockchain queries</li>
+    <li>Implement IPFS/Arweave integration for disclosure documents</li>
+    <li>Build APIs for donor and spending analytics</li>
+    <li>Create webhook notifications for campaign events</li>
+    <li>Enable CSV export for donor records and spending history</li>
+    <li>Implement report hash generation tools</li>
+    <li>Provide treasurer dashboard for campaign management</li>
+  </ul>
+
+  <h2 id="9-glossary-of-terms">9. 📘 Glossary of Terms</h2>
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>Campaign Finance</strong></td><td>System for managing political campaign funds with transparency and accountability.</td></tr>
+    <tr><td><strong>Milestone</strong></td><td>A specific phase in a grant program requiring report submission before fund release.</td></tr>
+    <tr><td><strong>Grant</strong></td><td>A structured funding program with milestone-based disbursement schedule.</td></tr>
+    <tr><td><strong>Treasurer</strong></td><td>Authorized campaign manager with permission to create grants and disburse funds.</td></tr>
+    <tr><td><strong>Donor Record</strong></td><td>Immutable audit trail entry recording a single donation with timestamp.</td></tr>
+    <tr><td><strong>Disclosure Document</strong></td><td>Public document detailing campaign finances, stored off-chain with on-chain reference.</td></tr>
+    <tr><td><strong>Per-Transaction Limit</strong></td><td>Maximum amount that can be spent in a single transaction for spending control.</td></tr>
+    <tr><td><strong>Total Budget</strong></td><td>Overall campaign spending limit across all operations and grants.</td></tr>
+    <tr><td><strong>Report Hash</strong></td><td>Cryptographic hash of a milestone report used for verification before fund release.</td></tr>
+    <tr><td><strong>Phase</strong></td><td>Current milestone index in a grant's progress (0-based).</td></tr>
+    <tr><td><strong>Continuing Output</strong></td><td>UTXO that returns to the same script address, maintaining state across transactions.</td></tr>
+    <tr><td><strong>Audit Trail</strong></td><td>Immutable record of all donations and transactions for transparency.</td></tr>
+    <tr><td><strong>Datum</strong></td><td>On-chain data associated with a UTXO that parameterizes validator behavior.</td></tr>
+    <tr><td><strong>Redeemer</strong></td><td>Transaction input specifying which action to perform on a script UTXO.</td></tr>
+    <tr><td><strong>Validator</strong></td><td>Smart contract logic that validates whether a transaction is allowed.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Unix timestamp in milliseconds used for deadline validation.</td></tr>
+    <tr><td><strong>PubKeyHash</strong></td><td>Cryptographic hash of a public key used to identify users and verify signatures.</td></tr>
+    <tr><td><strong>Lovelace</strong></td><td>Smallest unit of ADA cryptocurrency (1 ADA = 1,000,000 lovelace).</td></tr>
+    <tr><td><strong>BuiltinByteString</strong></td><td>Plutus primitive type for efficient on-chain byte sequence handling.</td></tr>
+    <tr><td><strong>IPFS</strong></td><td>InterPlanetary File System - distributed storage for disclosure documents.</td></tr>
+    <tr><td><strong>Arweave</strong></td><td>Permanent decentralized storage protocol for long-term document retention.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Human-readable encoding format for Cardano addresses.</td></tr>
+    <tr><td><strong>Testnet</strong></td><td>Testing blockchain environment that simulates mainnet without real financial value.</td></tr>
+    <tr><t

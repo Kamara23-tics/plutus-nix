@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Escrow NFT Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>🔐 Detailed Tutorial: Understanding and Using the <code>Escrow NFT</code> Smart Contract</h1>
+
+  <p>This tutorial covers the Escrow NFT module, highlighting its purpose, critical imports, validator logic, and practical usage scenarios. This module enables secure peer-to-peer NFT trades with buyer protection and seller refund mechanisms on the Cardano blockchain.</p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-data-structures">🗃️ Data Structures</a></li>
+    <li><a href="#3-core-validator-logic">🧠 Core Validator Logic</a></li>
+    <li><a href="#4-validator-script-compilation">⚙️ Validator Script Compilation</a></li>
+    <li><a href="#5-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#6-practical-usage-example">🧪 Practical Usage Example</a></li>
+    <li><a href="#7-testing-strategy">🧷 Testing Strategy</a></li>
+    <li><a href="#8-best-practices">✅ Best Practices</a></li>
+    <li><a href="#9-glossary-of-terms">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+
+  <h3>Plutus API Modules</h3>
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api:</strong> Provides fundamental types such as <code>POSIXTime</code>, <code>PubKeyHash</code>, <code>CurrencySymbol</code>, <code>TokenName</code>, and transaction context (<code>ScriptContext</code>, <code>TxInfo</code>).</li>
+    <li><strong>Plutus.V2.Ledger.Contexts:</strong> Contains utility functions for transaction context validation including <code>txSignedBy</code>, <code>findOwnInput</code>, <code>valuePaidTo</code>, and <code>txInInfoResolved</code>.</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Supplies interval checking functions (<code>contains</code>, <code>from</code>) for time-based validation of deadlines.</li>
+    <li><strong>Plutus.V1.Ledger.Value:</strong> Provides <code>valueOf</code> for extracting specific token amounts, plus <code>adaSymbol</code> and <code>adaToken</code> for ADA calculations.</li>
+  </ul>
+
+  <h3>PlutusTx Modules</h3>
+  <ul>
+    <li><strong>PlutusTx:</strong> Core module enabling on-chain compilation with Template Haskell (<code>compile</code>, <code>unstableMakeIsData</code>, <code>unsafeFromBuiltinData</code>).</li>
+    <li><strong>PlutusTx.Prelude:</strong> Plutus-compatible prelude with safe on-chain functions, imported with exclusions to avoid conflicts.</li>
+    <li><strong>PlutusTx.Builtins:</strong> Low-level builtin functions for on-chain operations, particularly <code>toBuiltin</code> for data conversions.</li>
+  </ul>
+
+  <h3>Serialization and Encoding</h3>
+  <ul>
+    <li><strong>Codec.Serialise:</strong> CBOR serialization for compiling validators to binary format suitable for blockchain deployment.</li>
+    <li><strong>Data.ByteString modules (Lazy, Short, Strict):</strong> Handle binary data in various formats for efficient validator serialization and hashing.</li>
+  </ul>
+
+  <h3>Cardano API</h3>
+  <ul>
+    <li><strong>Cardano.Api:</strong> Provides network configuration (<code>NetworkId</code>, <code>NetworkMagic</code>), script hashing (<code>hashScript</code>), and address creation functions.</li>
+    <li><strong>Cardano.Api.Shelley:</strong> Contains Shelley-era specific types like <code>PlutusScriptSerialised</code> and address construction functions (<code>makeShelleyAddressInEra</code>).</li>
+  </ul>
+
+  <h3>Standard Haskell Libraries</h3>
+  <ul>
+    <li><strong>Prelude:</strong> Basic I/O operations (<code>IO</code>, <code>putStrLn</code>), string manipulation, and file operations, imported qualified to avoid conflicts with PlutusTx.Prelude.</li>
+    <li><strong>Data.Text:</strong> Efficient text handling for address conversion and serialization.</li>
+  </ul>
+
+  <h2 id="2-data-structures">2. 🗃️ Data Structures</h2>
+
+  <h3><code>EscrowDatum</code></h3>
+  <p>Defines the escrow contract's datum, containing all necessary information for the trade:</p>
+  <ul>
+    <li><strong>edBuyer:</strong> Public key hash of the buyer who will pay ADA and receive the NFT</li>
+    <li><strong>edSeller:</strong> Public key hash of the seller who deposits the NFT and will receive payment</li>
+    <li><strong>edAmount:</strong> Purchase price in lovelace (1 ADA = 1,000,000 lovelace)</li>
+    <li><strong>edDeadline:</strong> POSIX timestamp after which the seller can reclaim their NFT if buyer hasn't completed the purchase</li>
+    <li><strong>edCurrency:</strong> Currency symbol (policy ID) of the NFT being traded</li>
+    <li><strong>edToken:</strong> Token name of the specific NFT being traded</li>
+  </ul>
+
+  <h3><code>EscrowAction</code></h3>
+  <p>Sum type defining the two possible actions in the escrow contract:</p>
+  <ul>
+    <li><strong>PaySeller:</strong> Buyer completes the purchase by paying the seller and receiving the NFT</li>
+    <li><strong>RefundSeller:</strong> Seller reclaims their NFT after the deadline expires (buyer didn't purchase)</li>
+  </ul>
+
+  <h2 id="3-core-validator-logic">3. 🧠 Core Validator Logic</h2>
+
+  <h3><code>scriptInputContainsNFT</code></h3>
+  <p><strong>Purpose:</strong> Verify that the script input (UTXO being spent) contains the NFT specified in the datum.</p>
+  <p><strong>Implementation:</strong></p>
+  <ul>
+    <li>Uses <code>findOwnInput</code> to locate the UTXO being spent from the script</li>
+    <li>Extracts the value from the resolved transaction input</li>
+    <li>Checks if the value contains at least 1 unit of the specified NFT (currency symbol + token name)</li>
+    <li>Returns <code>True</code> if NFT is present, throws trace error if input not found</li>
+  </ul>
+
+  <h3><code>mkValidator</code></h3>
+  <p>The main validator function implements two distinct transaction flows:</p>
+
+  <h4>1. Pay Seller (<code>PaySeller</code>)</h4>
+  <p><strong>Purpose:</strong> Allow buyer to complete the purchase by paying the seller and receiving the NFT.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li><strong>NFT Verification:</strong> Script input must contain the specified NFT (prevents wrong NFT or missing NFT attacks)</li>
+    <li><strong>Buyer Authorization:</strong> Transaction must be signed by the buyer's public key</li>
+    <li><strong>Payment Verification:</strong> Seller must receive at least the agreed amount in ADA</li>
+    <li><strong>NFT Transfer:</strong> Buyer must receive at least 1 unit of the NFT</li>
+  </ul>
+
+  <h4>2. Refund Seller (<code>RefundSeller</code>)</h4>
+  <p><strong>Purpose:</strong> Allow seller to reclaim their NFT if buyer doesn't complete the purchase by the deadline.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li><strong>NFT Verification:</strong> Script input must contain the specified NFT</li>
+    <li><strong>Seller Authorization:</strong> Transaction must be signed by the seller's public key</li>
+    <li><strong>Deadline Check:</strong> Current time must be after the deadline (deadline + 1 to ensure it's truly past)</li>
+    <li><strong>NFT Return:</strong> Seller must receive their NFT back</li>
+  </ul>
+
+  <h3>Validation Helper Functions</h3>
+  <ul>
+    <li><strong>afterDeadline:</strong> Uses interval arithmetic to check if current transaction time is after the deadline</li>
+    <li><strong>sellerPaid:</strong> Uses <code>valuePaidTo</code> to calculate total ADA sent to seller and verifies it meets the required amount</li>
+    <li><strong>buyerGetsNFT:</strong> Verifies buyer receives at least 1 unit of the NFT</li>
+    <li><strong>sellerGetsNFT:</strong> Verifies seller receives their NFT back in refund scenario</li>
+  </ul>
+
+  <h2 id="4-validator-script-compilation">4. ⚙️ Validator Script Compilation</h2>
+
+  <h3><code>mkValidatorUntyped</code></h3>
+  <p>Wraps the typed validator function for compatibility with Plutus on-chain execution using <code>BuiltinData</code>. This untyped wrapper:</p>
+  <ul>
+    <li>Deserializes datum (<code>EscrowDatum</code>) from raw builtin data</li>
+    <li>Deserializes redeemer (<code>EscrowAction</code>) from raw builtin data</li>
+    <li>Deserializes script context from raw builtin data</li>
+    <li>Calls the typed <code>mkValidator</code> function with deserialized parameters</li>
+    <li>Returns <code>()</code> on successful validation or triggers an error on failure</li>
+  </ul>
+
+  <h3><code>validator</code></h3>
+  <p>Compiles the untyped validator using Template Haskell's <code>compile</code> splice into a Plutus Core script ready for blockchain deployment. Uses <code>mkValidatorScript</code> to wrap the compiled code into a proper <code>Validator</code> type.</p>
+
+  <h2 id="5-helper-functions">5. 🔧 Helper Functions</h2>
+
+  <h3>Script Hash and Address Generation</h3>
+  <ul>
+    <li><strong><code>plutusValidatorHash</code>:</strong> Computes the on-chain validator hash using only Plutus types. Serializes the validator, converts to <code>ShortByteString</code>, then to <code>BuiltinByteString</code>, and wraps in <code>ValidatorHash</code>.</li>
+    <li><strong><code>plutusScriptAddress</code>:</strong> Generates the Plutus script address with <code>ScriptCredential</code> and no stake address, used for on-chain address representation.</li>
+  </ul>
+
+  <h3>Bech32 Address Generation</h3>
+  <ul>
+    <li><strong><code>toBech32ScriptAddress</code>:</strong> Generates the validator script's human-readable Bech32 address for a given network using Cardano API functions. This address is used for CLI transactions and wallet integrations. Serializes the validator, creates a <code>PlutusScriptV2</code>, hashes it, and constructs a Babbage-era address.</li>
+  </ul>
+
+  <h3>File Operations</h3>
+  <ul>
+    <li><strong><code>writeValidator</code>:</strong> Writes the compiled validator script to a <code>.plutus</code> file for deployment. Serializes the validator to CBOR format and saves as binary file.</li>
+  </ul>
+
+  <h3>Main Function</h3>
+  <ul>
+    <li><strong><code>main</code>:</strong> Orchestrates validator compilation, file writing, and information display. Sets up testnet configuration, generates addresses, and prints all relevant contract information.</li>
+  </ul>
+
+  <h2 id="6-practical-usage-example">6. 🧪 Practical Usage Example</h2>
+
+  <h3>Deploying the Contract</h3>
+  <pre><code>-- Compile and generate validator
+stack run  -- or cabal run
+
+-- Output includes:
+-- - validator.plutus file
+-- - Validator hash (Plutus format)
+-- - Plutus script address
+-- - Bech32 script address for testnet
+</code></pre>
+
+  <h3>Complete Trade Workflow</h3>
+  <pre><code>-- Step 1: Seller initiates escrow
+-- Create EscrowDatum with:
+--   - Buyer's PKH
+--   - Seller's PKH
+--   - Price (e.g., 100000000 lovelace = 100 ADA)
+--   - Deadline (e.g., 7 days from now)
+--   - NFT currency symbol (policy ID)
+--   - NFT token name
+
+-- Step 2: Seller deposits NFT + minimum ADA at script address
+-- Transaction sends:
+--   - 1 unit of specified NFT
+--   - 2 ADA minimum for UTXO
+--   - Inline datum with EscrowDatum
+
+-- Step 3a: Buyer completes purchase (Happy Path)
+-- Transaction with PaySeller redeemer:
+--   - Signed by buyer
+--   - Sends agreed amount to seller
+--   - Receives NFT from script
+--   - Before deadline expires
+
+-- Step 3b: Seller reclaims NFT (Timeout Path)
+-- Transaction with RefundSeller redeemer:
+--   - Signed by seller
+--   - After deadline has passed
+--   - Seller receives NFT back
+--   - Reclaims minimum ADA
+</code></pre>
+
+  <h3>Example Datum Creation</h3>
+  <pre><code>{
+  "constructor": 0,
+  "fields": [
+    {"bytes": "659ab08ff1..."},        # Buyer PKH
+    {"bytes": "a7c3d45e89..."},        # Seller PKH
+    {"int": 100000000},                # 100 ADA in lovelace
+    {"int": 1735689600000},            # Deadline timestamp
+    {"bytes": "8f7b3c..."},            # NFT Policy ID
+    {"bytes": "4d794e4654"}            # NFT Token Name
+  ]
+}
+</code></pre>
+
+  <h2 id="7-testing-strategy">7. 🧷 Testing Strategy</h2>
+
+  <h3>Happy Path Testing</h3>
+  <ul>
+    <li>Test successful purchase with exact payment amount</li>
+    <li>Test successful purchase with overpayment (buyer sends more than required)</li>
+    <li>Verify NFT transfer to buyer occurs correctly</li>
+    <li>Test purchase just before deadline expires</li>
+  </ul>
+
+  <h3>Refund Path Testing</h3>
+  <ul>
+    <li>Test seller reclaim exactly at deadline + 1</li>
+    <li>Test seller reclaim well after deadline</li>
+    <li>Verify NFT returns to seller correctly</li>
+    <li>Test refund with correct seller signature</li>
+  </ul>
+
+  <h3>Security Testing</h3>
+  <ul>
+    <li><strong>Authorization:</strong> Attempt purchase with non-buyer signature (should fail)</li>
+    <li><strong>Authorization:</strong> Attempt refund with non-seller signature (should fail)</li>
+    <li><strong>Timing:</strong> Attempt refund before deadline (should fail)</li>
+    <li><strong>Payment:</strong> Attempt purchase with underpayment (should fail)</li>
+    <li><strong>NFT Verification:</strong> Attempt to spend UTXO without the specified NFT (should fail)</li>
+    <li><strong>NFT Verification:</strong> Attempt to spend UTXO with wrong NFT (should fail)</li>
+  </ul>
+
+  <h3>Edge Cases</h3>
+  <ul>
+    <li>Test with NFT token name containing special characters</li>
+    <li>Test with very large payment amounts</li>
+    <li>Test with minimum possible deadline (1 second in future)</li>
+    <li>Test with very far future deadline</li>
+    <li>Test multiple concurrent escrows with same parties</li>
+    <li>Test escrow with NFTs from different policies</li>
+  </ul>
+
+  <h2 id="8-best-practices">8. ✅ Best Practices</h2>
+
+  <h3>Smart Contract Development</h3>
+  <ul>
+    <li>Always use <code>traceIfFalse</code> with descriptive error messages for easier debugging and transaction failure analysis</li>
+    <li>Verify NFT presence in script input to prevent substitution attacks</li>
+    <li>Use strict inequality checks for amounts (>= instead of ==) to allow overpayment scenarios</li>
+    <li>Set reasonable deadlines (typically 3-7 days) to balance buyer time and seller risk</li>
+    <li>Include minimum ADA with NFT deposits to ensure UTXO validity</li>
+  </ul>
+
+  <h3>Security Considerations</h3>
+  <ul>
+    <li>Always verify both currency symbol and token name to ensure correct NFT</li>
+    <li>Implement proper signature checks for all actions to prevent unauthorized access</li>
+    <li>Use deadline + 1 in time checks to avoid edge cases at exact deadline</li>
+    <li>Consider front-running scenarios - buyer might race to purchase before seller refund</li>
+    <li>Validate that NFT quantity is exactly 1 to prevent partial transfers</li>
+    <li>Use <code>findOwnInput</code> to ensure you're checking the correct UTXO</li>
+  </ul>
+
+  <h3>User Experience</h3>
+  <ul>
+    <li>Display clear deadline countdowns in UI to encourage timely buyer action</li>
+    <li>Show NFT verification status before creating escrow</li>
+    <li>Provide transaction fee estimates for both purchase and refund paths</li>
+    <li>Implement notification system for approaching deadlines</li>
+    <li>Allow sellers to create escrows with buyer proposals</li>
+    <li>Display transaction history for all escrows</li>
+  </ul>
+
+  <h3>Integration Tips</h3>
+  <ul>
+    <li>Use wallet connector libraries (e.g., Lucid, Mesh) for easier transaction building</li>
+    <li>Query NFT metadata before creating escrow to display visual confirmation</li>
+    <li>Implement UTXO selection strategies to minimize fees</li>
+    <li>Cache script address and validator hash to avoid repeated computation</li>
+    <li>Validate NFT ownership before allowing seller to create escrow</li>
+  </ul>
+
+  <h2 id="9-glossary-of-terms">9. 📘 Glossary of Terms</h2>
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>Escrow</strong></td><td>A financial arrangement where assets are held by a third party (smart contract) pending fulfillment of conditions.</td></tr>
+    <tr><td><strong>NFT (Non-Fungible Token)</strong></td><td>A unique digital asset on the blockchain, identified by a currency symbol and token name.</td></tr>
+    <tr><td><strong>Currency Symbol</strong></td><td>The policy ID that uniquely identifies a token policy on Cardano (also called minting policy hash).</td></tr>
+    <tr><td><strong>Token Name</strong></td><td>The specific identifier for an individual token within a currency symbol/policy.</td></tr>
+    <tr><td><strong>Datum</strong></td><td>On-chain data associated with a UTXO at a script address that parameterizes validator behavior.</td></tr>
+    <tr><td><strong>Redeemer</strong></td><td>Transaction input specifying which action to perform (PaySeller or RefundSeller).</td></tr>
+    <tr><td><strong>Validator</strong></td><td>Smart contract logic that validates whether a transaction spending script UTXOs is allowed.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Unix timestamp representation in milliseconds used in Plutus for time-based logic.</td></tr>
+    <tr><td><strong>PubKeyHash</strong></td><td>Cryptographic hash of a public key used to identify users and verify signatures.</td></tr>
+    <tr><td><strong>Lovelace</strong></td><td>Smallest unit of ADA cryptocurrency (1 ADA = 1,000,000 lovelace).</td></tr>
+    <tr><td><strong>txSignedBy</strong></td><td>Function checking if a transaction was signed by a specific public key hash.</td></tr>
+    <tr><td><strong>valueOf</strong></td><td>Function extracting the quantity of a specific token from a Value.</td></tr>
+    <tr><td><strong>findOwnInput</strong></td><td>Function locating the specific UTXO being spent from the script in current transaction.</td></tr>
+    <tr><td><strong>valuePaidTo</strong></td><td>Function calculating total value sent to a specific public key hash in a transaction.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Human-readable encoding format for Cardano addresses (starts with "addr" for mainnet, "addr_test" for testnet).</td></tr>
+    <tr><td><strong>BuiltinData</strong></td><td>Raw Plutus-compatible data type for efficient on-chain serialization and deserialization.</td></tr>
+    <tr><td><strong>Script Credential</strong></td><td>Payment credential type for script addresses (vs. key hash credential for regular addresses).</td></tr>
+    <tr><td><strong>UTXO (Unspent Transaction Output)</strong></td><td>An unspent output from a transaction that can be used as input for new transactions.</td></tr>
+    <tr><td><strong>Testnet</strong></td><td>Testing blockchain environment that simulates mainnet without real financial value.</td></tr>
+    <tr><td><strong>NetworkMagic</strong></td><td>Unique identifier distinguishing different Cardano networks (preview, preprod, testnet).</td></tr>
+    <tr><td><strong>Template Haskell</strong></td><td>Haskell metaprogramming system used to compile Plutus validators at compile time.</td></tr>
+    <tr><td><strong>CBOR</strong></td><td>Concise Binary Object Representation - serialization format used for Plutus scripts.</td></tr>
+  </table>
+
+  <hr>
+
+  <h2>🎯 Contract Summary</h2>
+  <p>The Escrow NFT smart contract provides a secure, trustless mechanism for peer-to-peer NFT trading on Cardano with the following key features:</p>
+  <ol>
+    <li><strong>Buyer Protection:</strong> NFT is locked in escrow until buyer completes payment, preventing seller from taking payment without delivering the NFT.</li>
+    <li><strong>Seller Protection:</strong> If buyer doesn't complete purchase by the deadline, seller can reclaim their NFT through the refund mechanism.</li>
+    <li><strong>No Third Party:</strong> The smart contract itself acts as the escrow agent, eliminating the need for trusted intermediaries.</li>
+    <li><strong>Atomic Swaps:</strong> Payment and NFT transfer happen atomically in a single transaction - either both succeed or both fail.</li>
+  </ol>
+  <p>This contract demonstrates essential Plutus patterns including NFT verification, time-based logic, signature validation, value tracking, and dual-path transaction flows. It's suitable for NFT marketplaces, direct P2P trades, or as a foundation for more complex trading mechanisms.</p>
+
+  <h2>🚀 Next Steps</h2>
+  <ul>
+    <li>Integrate with a wallet connector for easy transaction building</li>
+    <li>Build a frontend interface for creating and completing escrows</li>
+    <li>Add multi-NFT support for bundle trades</li>
+    <li>Implement partial payment or installment features</li>
+    <li>Add royalty payment logic for NFT creators</li>
+    <li>Create dispute resolution mechanisms</li>
+  </ul>
+
+</body>
+</html>

@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Communication Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>📱 Detailed Tutorial: Understanding and Using the <code>Communication.hs</code> Smart Contract</h1>
+
+  <p>This tutorial covers the Communication smart contract module, which implements prepaid communication vouchers and spam-prevention messaging with deposit escrow. This innovative contract combines service vouchers with an anti-spam mechanism for decentralized communication on Cardano.</p>
+
+  <hr>
+
+  <h2>📚 Table of Contents</h2>
+  <ol>
+    <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+    <li><a href="#2-data-structures">🗃️ Data Structures</a></li>
+    <li><a href="#3-core-validator-logic">🧠 Core Validator Logic</a></li>
+    <li><a href="#4-validator-script-compilation">⚙️ Validator Script Compilation</a></li>
+    <li><a href="#5-helper-functions">🔧 Helper Functions</a></li>
+    <li><a href="#6-practical-usage-example">🧪 Practical Usage Examples</a></li>
+    <li><a href="#7-testing-strategy">🧷 Testing Strategy</a></li>
+    <li><a href="#8-best-practices">✅ Best Practices</a></li>
+    <li><a href="#9-glossary-of-terms">📘 Glossary of Terms</a></li>
+  </ol>
+
+  <hr>
+
+  <h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+
+  <h3>Plutus API Modules</h3>
+  <ul>
+    <li><strong>Plutus.V2.Ledger.Api:</strong> Provides fundamental types such as <code>POSIXTime</code>, <code>PubKeyHash</code>, <code>Validator</code>, and transaction context (<code>ScriptContext</code>, <code>TxInfo</code>).</li>
+    <li><strong>Plutus.V2.Ledger.Contexts:</strong> Contains utility functions for transaction context validation including <code>txSignedBy</code>, <code>getContinuingOutputs</code>, and <code>valuePaidTo</code>.</li>
+    <li><strong>Plutus.V1.Ledger.Interval:</strong> Supplies interval checking functions (<code>contains</code>, <code>from</code>, <code>to</code>) for time-based validation.</li>
+    <li><strong>Plutus.V1.Ledger.Value:</strong> Provides <code>valueOf</code> for extracting specific token amounts, plus <code>adaSymbol</code> and <code>adaToken</code> for ADA calculations.</li>
+  </ul>
+
+  <h3>PlutusTx Modules</h3>
+  <ul>
+    <li><strong>PlutusTx:</strong> Core module enabling on-chain compilation with Template Haskell (<code>compile</code>, <code>unstableMakeIsData</code>).</li>
+    <li><strong>PlutusTx.Prelude:</strong> Plutus-compatible prelude with safe on-chain functions.</li>
+    <li><strong>PlutusTx.Builtins:</strong> Low-level builtin functions for on-chain operations.</li>
+  </ul>
+
+  <h3>Serialization and Encoding</h3>
+  <ul>
+    <li><strong>Codec.Serialise:</strong> CBOR serialization for compiling validators to binary format.</li>
+    <li><strong>Data.ByteString modules:</strong> Handle binary data in various formats (strict, lazy, short) for validator serialization.</li>
+  </ul>
+
+  <h3>Cardano API</h3>
+  <ul>
+    <li><strong>Cardano.Api / Cardano.Api.Shelley:</strong> Provides network configuration (<code>NetworkId</code>, <code>NetworkMagic</code>) and Bech32 address generation functions.</li>
+  </ul>
+
+  <h3>Standard Haskell Libraries</h3>
+  <ul>
+    <li><strong>Prelude:</strong> Basic I/O operations, string manipulation.</li>
+    <li><strong>Data.Text:</strong> Efficient text handling for address conversion.</li>
+  </ul>
+
+  <h2 id="2-data-structures">2. 🗃️ Data Structures</h2>
+
+  <h3><code>ServiceType</code></h3>
+  <p>Enumeration for communication service categories:</p>
+  <ul>
+    <li><strong>DataService:</strong> Mobile data quota</li>
+    <li><strong>VoiceService:</strong> Voice call minutes</li>
+    <li><strong>BothServices:</strong> Invalid for single redemption (reserved for future use)</li>
+  </ul>
+
+  <h3><code>Voucher</code></h3>
+  <p>Represents a prepaid communication voucher with the following fields:</p>
+  <ul>
+    <li><strong>vOwner:</strong> Public key hash of the voucher owner who can redeem services</li>
+    <li><strong>vQuotaData:</strong> Available data quota in megabytes</li>
+    <li><strong>vQuotaVoice:</strong> Available voice call quota in minutes</li>
+    <li><strong>vExpiry:</strong> POSIX timestamp after which the voucher becomes invalid</li>
+    <li><strong>vIssuer:</strong> Public key hash of the service provider who issued the voucher</li>
+  </ul>
+
+  <h3><code>MsgEscrow</code></h3>
+  <p>Message escrow structure with spam prevention deposit:</p>
+  <ul>
+    <li><strong>meSender:</strong> Public key hash of the message sender</li>
+    <li><strong>meRecipient:</strong> Public key hash of the intended recipient</li>
+    <li><strong>meDeposit:</strong> Deposit amount in lovelace (1 ADA = 1,000,000 lovelace)</li>
+    <li><strong>meMsgHash:</strong> Hash of the encrypted message content for verification</li>
+    <li><strong>meTTL:</strong> Time-to-live/expiration timestamp for the message</li>
+    <li><strong>meAccepted:</strong> Boolean flag indicating recipient acceptance status</li>
+  </ul>
+
+  <h3><code>CommDatum</code></h3>
+  <p>Sum type combining both contract use cases:</p>
+  <ul>
+    <li><strong>VoucherDatum:</strong> Contains a <code>Voucher</code> for prepaid service tracking</li>
+    <li><strong>MessageDatum:</strong> Contains a <code>MsgEscrow</code> for spam-prevention messaging</li>
+  </ul>
+
+  <h3><code>CommAction</code></h3>
+  <p>Redeemer actions defining all possible contract interactions:</p>
+  <ul>
+    <li><strong>RedeemVoucher:</strong> Redeem quota from voucher (service type, amount)</li>
+    <li><strong>TopUpVoucher:</strong> Add quota to existing voucher (data MB, voice minutes)</li>
+    <li><strong>SendMessage:</strong> Initialize message escrow with deposit</li>
+    <li><strong>AcceptMessage:</strong> Recipient accepts message, deposit refunded to sender</li>
+    <li><strong>RejectMessage:</strong> Recipient rejects message, deposit forfeited to recipient</li>
+    <li><strong>ReclaimExpired:</strong> Sender reclaims deposit after TTL expiry</li>
+  </ul>
+
+  <h2 id="3-core-validator-logic">3. 🧠 Core Validator Logic</h2>
+
+  <h3><code>mkValidator</code></h3>
+  <p>The main validator function implements six distinct transaction flows:</p>
+
+  <h4>1. Redeem Voucher (<code>RedeemVoucher</code>)</h4>
+  <p><strong>Purpose:</strong> Allow voucher owner to consume quota for services.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by the voucher owner</li>
+    <li>Voucher must not have expired (current time ≤ expiry)</li>
+    <li>Voucher must have sufficient quota for the requested amount</li>
+    <li>Service provider (issuer) must receive appropriate service fee</li>
+    <li>Continuing output must contain updated voucher with deducted quota</li>
+  </ul>
+
+  <h4>2. Top Up Voucher (<code>TopUpVoucher</code>)</h4>
+  <p><strong>Purpose:</strong> Add additional quota to an existing voucher.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by both owner and issuer</li>
+    <li>Payment for top-up must be received by issuer (calculated based on data and voice amounts)</li>
+    <li>Continuing output must reflect increased quota amounts</li>
+  </ul>
+
+  <h4>3. Send Message (<code>SendMessage</code>)</h4>
+  <p><strong>Purpose:</strong> Create message escrow with anti-spam deposit.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by sender</li>
+    <li>Deposit must remain locked in the contract</li>
+    <li>Message must be sent within its TTL period</li>
+  </ul>
+
+  <h4>4. Accept Message (<code>AcceptMessage</code>)</h4>
+  <p><strong>Purpose:</strong> Recipient accepts message, deposit returned to sender.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by recipient</li>
+    <li>Message must not have expired</li>
+    <li>Message must not already be accepted</li>
+    <li>Sender must receive full deposit refund</li>
+    <li>Continuing output must mark message as accepted</li>
+  </ul>
+
+  <h4>5. Reject Message (<code>RejectMessage</code>)</h4>
+  <p><strong>Purpose:</strong> Recipient rejects spam, claims deposit as penalty.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by recipient</li>
+    <li>Message must not have expired</li>
+    <li>Deposit must be paid to recipient (spam penalty)</li>
+  </ul>
+
+  <h4>6. Reclaim Expired (<code>ReclaimExpired</code>)</h4>
+  <p><strong>Purpose:</strong> Sender reclaims deposit if recipient doesn't respond.</p>
+  <p><strong>Validation Conditions:</strong></p>
+  <ul>
+    <li>Transaction must be signed by sender</li>
+    <li>TTL must have expired (current time > TTL)</li>
+    <li>Deposit must be returned to sender</li>
+  </ul>
+
+  <h3>Helper Functions</h3>
+  <ul>
+    <li><strong>isExpired:</strong> Checks if a deadline has passed</li>
+    <li><strong>isNotExpired:</strong> Checks if a deadline hasn't been reached</li>
+    <li><strong>hasEnoughQuota:</strong> Verifies sufficient quota for service type</li>
+    <li><strong>deductQuota:</strong> Returns voucher with reduced quota</li>
+    <li><strong>addQuota:</strong> Returns voucher with increased quota</li>
+  </ul>
+
+  <h2 id="4-validator-script-compilation">4. ⚙️ Validator Script Compilation</h2>
+
+  <h3><code>mkValidatorUntyped</code></h3>
+  <p>Wraps the typed validator function for compatibility with Plutus on-chain execution using <code>BuiltinData</code>. This function:</p>
+  <ul>
+    <li>Deserializes datum, redeemer, and context from raw builtin data</li>
+    <li>Calls the typed <code>mkValidator</code> function</li>
+    <li>Returns <code>()</code> on success or triggers an error on failure</li>
+  </ul>
+
+  <h3><code>validator</code></h3>
+  <p>Compiles the untyped validator using Template Haskell into a Plutus Core script ready for blockchain deployment.</p>
+
+  <h2 id="5-helper-functions">5. 🔧 Helper Functions</h2>
+
+  <h3>Script Compilation and Serialization</h3>
+  <ul>
+    <li><strong><code>plutusValidatorHash</code>:</strong> Computes the validator hash from the compiled script</li>
+    <li><strong><code>plutusScriptAddress</code>:</strong> Generates the Plutus script address with script credential</li>
+    <li><strong><code>writeValidator</code>:</strong> Writes the compiled validator script to a <code>.plutus</code> file for deployment</li>
+  </ul>
+
+  <h3>Address Generation</h3>
+  <ul>
+    <li><strong><code>toBech32ScriptAddress</code>:</strong> Generates the validator script's Bech32 address for a given network (mainnet/testnet) using Cardano API functions</li>
+  </ul>
+
+  <h2 id="6-practical-usage-example">6. 🧪 Practical Usage Examples</h2>
+
+  <h3>Deploying the Contract</h3>
+  <pre><code>-- Compile and save the validator
+main
+
+-- Output includes:
+-- - Validator hash
+-- - Plutus script address
+-- - Bech32 testnet address
+-- - Feature summary
+</code></pre>
+
+  <h3>Voucher Workflow</h3>
+  <pre><code>-- 1. User purchases voucher (off-chain transaction to issuer)
+-- 2. Issuer creates VoucherDatum with initial quota and locks it at script
+-- 3. User redeems service:
+--    - Action: RedeemVoucher DataService 100  (100 MB data)
+--    - Pays service fee to issuer
+--    - Script validates and updates voucher with reduced quota
+-- 4. User tops up when quota runs low:
+--    - Action: TopUpVoucher 500 50  (500 MB data, 50 voice minutes)
+--    - Pays top-up price to issuer
+--    - Script validates and updates voucher with increased quota
+</code></pre>
+
+  <h3>Messaging Workflow</h3>
+  <pre><code>-- 1. Sender creates message with deposit:
+--    - Action: SendMessage
+--    - Locks deposit (e.g., 5 ADA) in contract
+--    - Includes message hash and recipient address
+-- 2. Recipient has three options:
+--    a) Accept: Action: AcceptMessage
+--       → Deposit refunded to sender
+--    b) Reject: Action: RejectMessage
+--       → Deposit forfeited to recipient (spam penalty)
+--    c) No response: After TTL expires, sender uses ReclaimExpired
+--       → Deposit returned to sender
+</code></pre>
+
+  <h2 id="7-testing-strategy">7. 🧷 Testing Strategy</h2>
+
+  <h3>Voucher Testing Scenarios</h3>
+  <ul>
+    <li>Test redemption with sufficient quota vs insufficient quota</li>
+    <li>Verify expiry checks (before and after expiration timestamp)</li>
+    <li>Confirm service fee calculations for different service types</li>
+    <li>Test quota deduction accuracy for data and voice services</li>
+    <li>Validate top-up payment calculations and quota updates</li>
+    <li>Test unauthorized redemption attempts (wrong signer)</li>
+  </ul>
+
+  <h3>Message Escrow Testing Scenarios</h3>
+  <ul>
+    <li>Test message acceptance flow (deposit refund to sender)</li>
+    <li>Test message rejection flow (deposit forfeit to recipient)</li>
+    <li>Validate TTL expiry timing (before and after deadline)</li>
+    <li>Test reclaim after TTL with correct signer</li>
+    <li>Verify deposit amount calculations in all scenarios</li>
+    <li>Test unauthorized accept/reject attempts</li>
+    <li>Verify double-acceptance prevention</li>
+  </ul>
+
+  <h3>Edge Cases</h3>
+  <ul>
+    <li>Voucher redemption at exact expiry timestamp</li>
+    <li>Message acceptance at exact TTL boundary</li>
+    <li>Zero quota redemption attempts</li>
+    <li>Very large quota or deposit amounts</li>
+    <li>Simultaneous transactions on same UTXO</li>
+  </ul>
+
+  <h2 id="8-best-practices">8. ✅ Best Practices</h2>
+
+  <h3>Smart Contract Development</h3>
+  <ul>
+    <li>Always use <code>traceIfFalse</code> with descriptive error messages for debugging</li>
+    <li>Implement comprehensive signature checks for all actions</li>
+    <li>Use continuing outputs carefully to maintain state correctly</li>
+    <li>Consider network congestion when setting TTL periods</li>
+    <li>Test with realistic fee structures and quota amounts</li>
+  </ul>
+
+  <h3>Security Considerations</h3>
+  <ul>
+    <li>Validate all numeric calculations to prevent overflow/underflow</li>
+    <li>Ensure deposit amounts are sufficient to deter spam</li>
+    <li>Implement proper access control through signature verification</li>
+    <li>Consider front-running scenarios in message acceptance</li>
+    <li>Use message hashes to verify content integrity</li>
+  </ul>
+
+  <h3>User Experience</h3>
+  <ul>
+    <li>Display clear quota balances before redemption</li>
+    <li>Show deposit amounts prominently before sending messages</li>
+    <li>Implement inbox filtering by deposit amount (higher deposits = higher priority)</li>
+    <li>Provide clear TTL countdowns for pending messages</li>
+    <li>Enable voucher transfer functionality (future enhancement)</li>
+  </ul>
+
+  <h2 id="9-glossary-of-terms">9. 📘 Glossary of Terms</h2>
+  <table>
+    <tr><th>Term</th><th>Definition</th></tr>
+    <tr><td><strong>Voucher</strong></td><td>A prepaid token containing quota for communication services (data and voice).</td></tr>
+    <tr><td><strong>Quota</strong></td><td>Available service units: data in megabytes (MB), voice in minutes.</td></tr>
+    <tr><td><strong>Escrow</strong></td><td>A locked deposit that is conditionally released based on recipient action.</td></tr>
+    <tr><td><strong>Spam Prevention</strong></td><td>Anti-spam mechanism requiring senders to risk a deposit when messaging.</td></tr>
+    <tr><td><strong>TTL (Time-to-Live)</strong></td><td>Expiration deadline for messages; after TTL, sender can reclaim deposit.</td></tr>
+    <tr><td><strong>Datum</strong></td><td>On-chain data associated with a UTXO that determines validator behavior.</td></tr>
+    <tr><td><strong>Redeemer</strong></td><td>Transaction input specifying which action to perform (e.g., RedeemVoucher).</td></tr>
+    <tr><td><strong>Validator</strong></td><td>Smart contract logic that validates whether a transaction is allowed.</td></tr>
+    <tr><td><strong>POSIXTime</strong></td><td>Unix timestamp representation used in Plutus for time-based logic.</td></tr>
+    <tr><td><strong>PubKeyHash</strong></td><td>Cryptographic hash of a public key used to identify users and verify signatures.</td></tr>
+    <tr><td><strong>Lovelace</strong></td><td>Smallest unit of ADA cryptocurrency (1 ADA = 1,000,000 lovelace).</td></tr>
+    <tr><td><strong>txSignedBy</strong></td><td>Function checking if a transaction was signed by a specific public key.</td></tr>
+    <tr><td><strong>getContinuingOutputs</strong></td><td>Retrieves outputs that return to the same script address (state continuation).</td></tr>
+    <tr><td><strong>valuePaidTo</strong></td><td>Calculates total value paid to a specific public key hash in a transaction.</td></tr>
+    <tr><td><strong>Bech32</strong></td><td>Human-readable encoding format for Cardano addresses.</td></tr>
+    <tr><td><strong>BuiltinData</strong></td><td>Raw Plutus-compatible data type for efficient on-chain serialization.</td></tr>
+    <tr><td><strong>Service Fee</strong></td><td>Payment to issuer when redeeming voucher quota for actual service usage.</td></tr>
+    <tr><td><strong>Testnet</strong></td><td>Testing blockchain environment that simulates mainnet without real funds.</td></tr>
+    <tr><td><strong>NetworkMagic</strong></td><td>Identifier distinguishing different Cardano networks (testnet vs mainnet).</td></tr>
+  </table>
+
+  <hr>
+
+  <h2>🎯 Contract Summary</h2>
+  <p>The Communication smart contract provides two powerful features:</p>
+  <ol>
+    <li><strong>Prepaid Vouchers:</strong> Users can purchase, redeem, and top-up communication service vouchers with quota tracking and expiration.</li>
+    <li><strong>Spam Prevention:</strong> Message senders must lock a deposit that recipients can claim if the message is spam, creating economic disincentives for unsolicited messages.</li>
+  </ol>
+  <p>This contract demonstrates advanced Plutus patterns including sum-type datums, multi-action redeemers, state continuation with continuing outputs, and economic game theory for spam prevention.</p>
+
+</body>
+</html>
