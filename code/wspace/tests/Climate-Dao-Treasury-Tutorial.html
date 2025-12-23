@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Climate DAO Treasury Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 6px;
+      line-height: 1.7;
+      color: #222;
+      max-width: 1000px;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 12px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+<h1>🌳 Climate DAO Treasury Smart Contract — Detailed Tutorial</h1>
+
+<p>
+This tutorial explains the <strong>Climate DAO Treasury</strong> Plutus V2 smart contract.
+The contract manages <em>proposal-based funding</em> for climate-related projects, ensuring
+funds are released only after a voting deadline or safely refunded if canceled early.
+</p>
+
+<hr>
+
+<h2>📚 Table of Contents</h2>
+<ol>
+  <li><a href="#imports">📦 Imports Overview</a></li>
+  <li><a href="#data">🗃️ Datum and Redeemer</a></li>
+  <li><a href="#helpers">🔧 Helper Functions</a></li>
+  <li><a href="#validator">🧠 Core Validator Logic</a></li>
+  <li><a href="#compilation">⚙️ Validator Compilation</a></li>
+  <li><a href="#addresses">🏠 Validator Hash & Addresses</a></li>
+  <li><a href="#usage">🧪 Practical Usage Example</a></li>
+  <li><a href="#testing">🧷 Testing Strategy</a></li>
+  <li><a href="#best">✅ Best Practices</a></li>
+  <li><a href="#glossary">📘 Glossary</a></li>
+</ol>
+
+<hr>
+
+<h2 id="imports">1. 📦 Imports Overview</h2>
+
+<h3>Plutus Core & Ledger APIs</h3>
+<ul>
+  <li><strong>Plutus.V2.Ledger.Api</strong> — Core on-chain types such as <code>Validator</code>, <code>POSIXTime</code>, <code>ScriptContext</code>, and <code>PubKeyHash</code>.</li>
+  <li><strong>Plutus.V2.Ledger.Contexts</strong> — Transaction inspection utilities:
+    <code>txSignedBy</code>, <code>valuePaidTo</code>, <code>findOwnInput</code>.
+  </li>
+  <li><strong>Plutus.V1.Ledger.Interval</strong> — Time interval checks using <code>contains</code>, <code>from</code>, and <code>to</code>.</li>
+  <li><strong>Plutus.V1.Ledger.Value</strong> — ADA extraction via <code>valueOf</code>, <code>adaSymbol</code>, and <code>adaToken</code>.</li>
+</ul>
+
+<h3>PlutusTx & Prelude</h3>
+<ul>
+  <li><strong>PlutusTx</strong> — Template Haskell compilation and on-chain data encoding.</li>
+  <li><strong>PlutusTx.Prelude</strong> — Minimal on-chain-compatible Prelude.</li>
+  <li><strong>NumericUnderscores</strong> — Improves readability of Lovelace values (e.g. <code>3_000_000</code>).</li>
+</ul>
+
+<h3>Off-chain & Serialization</h3>
+<ul>
+  <li><strong>Codec.Serialise</strong> — Converts validators into CBOR format.</li>
+  <li><strong>Cardano.Api</strong> — Used to derive Bech32 script addresses.</li>
+  <li><strong>System.IO</strong> — Ensures UTF-8 encoding for CLI output.</li>
+</ul>
+
+<hr>
+
+<h2 id="data">2. 🗃️ Datum and Redeemer</h2>
+
+<h3><code>ProposalDatum</code></h3>
+<p>
+Represents the on-chain state of a single DAO funding proposal.
+</p>
+
+<ul>
+  <li><strong>pdProposer</strong> — The entity submitting the proposal.</li>
+  <li><strong>pdFundingGoal</strong> — Minimum ADA required for funding (in Lovelace).</li>
+  <li><strong>pdVotingDeadline</strong> — Timestamp marking the end of voting.</li>
+  <li><strong>pdRecipient</strong> — Entity receiving funds if the proposal is approved.</li>
+</ul>
+
+<h3><code>TreasuryAction</code></h3>
+<p>
+Defines how the Treasury UTXO may be spent.
+</p>
+
+<ul>
+  <li><strong>FundProposal</strong> — Releases funds to the recipient after the deadline.</li>
+  <li><strong>CancelProposal</strong> — Refunds funds to the proposer before the deadline.</li>
+</ul>
+
+<hr>
+
+<h2 id="helpers">3. 🔧 Helper Functions</h2>
+
+<h3><code>scriptInputContainsAda</code></h3>
+<p>
+Ensures the script UTXO holds enough ADA to satisfy the funding goal.
+</p>
+
+<ul>
+  <li>Locates the script input using <code>findOwnInput</code>.</li>
+  <li>Extracts its value and checks ADA quantity.</li>
+  <li>Fails with a trace error if the input is missing.</li>
+</ul>
+
+<hr>
+
+<h2 id="validator">4. 🧠 Core Validator Logic</h2>
+
+<p>
+The validator enforces <strong>two mutually exclusive execution paths</strong>:
+</p>
+
+<h3>🟢 FundProposal</h3>
+<ul>
+  <li>Transaction must be signed by the proposer.</li>
+  <li>Voting deadline must have passed.</li>
+  <li>The script input must contain sufficient ADA.</li>
+  <li>The recipient must receive at least the funding goal.</li>
+</ul>
+
+<h3>🔴 CancelProposal</h3>
+<ul>
+  <li>Transaction must be signed by the proposer.</li>
+  <li>Voting deadline must NOT have passed.</li>
+  <li>Funds must be refunded to the proposer.</li>
+</ul>
+
+<p>
+Time constraints are enforced using <code>POSIXTimeRange</code> and
+<code>Interval.contains</code>.
+</p>
+
+<hr>
+
+<h2 id="compilation">5. ⚙️ Validator Compilation</h2>
+
+<p>
+The typed validator is wrapped into an untyped form compatible with Plutus Core:
+</p>
+
+<ul>
+  <li>Datums and redeemers are decoded from <code>BuiltinData</code>.</li>
+  <li>The validator returns <code>()</code> on success.</li>
+  <li>Failure results in a script error.</li>
+</ul>
+
+<p>
+Template Haskell compiles the validator into a <strong>Plutus V2 script</strong>.
+</p>
+
+<hr>
+
+<h2 id="addresses">6. 🏠 Validator Hash & Addresses</h2>
+
+<ul>
+  <li><strong>Validator Hash</strong> — Derived from the serialized Plutus script.</li>
+  <li><strong>On-chain Address</strong> — Uses <code>ScriptCredential</code>.</li>
+  <li><strong>Bech32 Address</strong> — Generated via <code>cardano-api</code> for CLI usage.</li>
+</ul>
+
+<hr>
+
+<h2 id="usage">7. 🧪 Practical Usage Example</h2>
+
+<pre><code>-- Write validator to file
+climate-dao-treasury.plutus
+
+-- Generate script address (testnet)
+cardano-cli address build \
+  --payment-script-file climate-dao-treasury.plutus \
+  --testnet-magic 1
+
+-- Lock funds with ProposalDatum JSON
+-- Spend with FundProposal or CancelProposal redeemer
+</code></pre>
+
+<hr>
+
+<h2 id="testing">8. 🧷 Testing Strategy</h2>
+
+<ul>
+  <li>Test funding attempts before and after the deadline.</li>
+  <li>Verify incorrect recipients cause validation failure.</li>
+  <li>Ensure refunds only work before the voting deadline.</li>
+  <li>Check minimum ADA edge cases.</li>
+</ul>
+
+<hr>
+
+<h2 id="best">9. ✅ Best Practices</h2>
+
+<ul>
+  <li>Always validate both <strong>time</strong> and <strong>value flow</strong>.</li>
+  <li>Use clear <code>traceIfFalse</code> messages for debugging.</li>
+  <li>Separate governance logic from treasury logic where possible.</li>
+  <li>Extensively test deadline boundaries.</li>
+</ul>
+
+<hr>
+
+<h2 id="glossary">10. 📘 Glossary</h2>
+
+<table>
+  <tr><th>Term</th><th>Definition</th></tr>
+  <tr><td>DAO</td><td>Decentralized Autonomous Organization.</td></tr>
+  <tr><td>Proposal</td><td>A request for treasury funding.</td></tr>
+  <tr><td>Datum</td><td>On-chain state attached to a script UTXO.</td></tr>
+  <tr><td>Redeemer</td><td>Action specifying how the script is spent.</td></tr>
+  <tr><td>POSIXTime</td><td>Blockchain time representation.</td></tr>
+  <tr><td>Validator</td><td>On-chain logic that approves or rejects transactions.</td></tr>
+  <tr><td>Bech32</td><td>Human-readable address encoding.</td></tr>
+</table>
+
+</body>
+</html>

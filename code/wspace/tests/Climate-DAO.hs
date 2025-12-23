@@ -206,4 +206,5 @@ main = do
     putStrLn $ "Plutus Script Address:    " <> P.show onchain
     putStrLn $ "Bech32 Script Address:    " <> bech32
     putStrLn "-----------------------------------------"
+
     putStrLn "Climate DAO Treasury validator generated successfully."

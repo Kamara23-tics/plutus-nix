@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>PGEF Staking Vault Smart Contract Tutorial</title>
+  <style>
+    body {
+      font-family: "Segoe UI", sans-serif;
+      background: #fdfdfd;
+      padding: 2px;
+      line-height: 1.7;
+      color: #222;
+      margin: auto;
+    }
+    h1, h2, h3 {
+      color: #002b45;
+    }
+    pre {
+      background: #f4f4f4;
+      padding: 10px;
+      border-radius: 6px;
+      overflow-x: auto;
+    }
+    code {
+      background: #eee;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 10px;
+      text-align: left;
+    }
+    a {
+      color: #0077cc;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+    ul, ol {
+      padding-left: 1.2em;
+    }
+  </style>
+</head>
+<body>
+
+<h1>🧾 Detailed Tutorial: Understanding and Using <code>PGEF Staking Vault</code></h1>
+
+<p>
+This tutorial explains the <strong>PGEF Staking Vault</strong> smart contract written in
+<strong>Plutus V2</strong>. The contract enables users to stake ADA, accrue yield over time,
+and later claim rewards while unstaking their principal.
+</p>
+
+<hr>
+
+<h2>📚 Table of Contents</h2>
+<ol>
+  <li><a href="#1-imports-overview">📦 Imports Overview</a></li>
+  <li><a href="#2-data-structures">🗃️ Data Structures</a></li>
+  <li><a href="#3-helper-functions">🔧 Helper Functions</a></li>
+  <li><a href="#4-core-validator-logic">🧠 Core Validator Logic</a></li>
+  <li><a href="#5-validator-script-compilation">⚙️ Validator Script Compilation</a></li>
+  <li><a href="#6-utility-functions">🛠️ Utility Functions</a></li>
+  <li><a href="#7-practical-usage-example">🧪 Practical Usage Example</a></li>
+  <li><a href="#8-testing-strategy">🧷 Testing Strategy</a></li>
+  <li><a href="#9-best-practices">✅ Best Practices</a></li>
+  <li><a href="#10-glossary-of-terms">📘 Glossary of Terms</a></li>
+</ol>
+
+<hr>
+
+<h2 id="1-imports-overview">1. 📦 Imports Overview</h2>
+
+<h3>Plutus Core Modules</h3>
+<ul>
+  <li><strong>Plutus.V2.Ledger.Api:</strong> Core on-chain types such as
+    <code>POSIXTime</code>, <code>ScriptContext</code>, <code>Validator</code>,
+    and <code>PubKeyHash</code>.</li>
+  <li><strong>Plutus.V2.Ledger.Contexts:</strong> Provides transaction inspection
+    helpers such as <code>txSignedBy</code> and <code>valuePaidTo</code>.</li>
+  <li><strong>Plutus.V1.Ledger.Interval:</strong> Used for extracting and validating
+    transaction time ranges.</li>
+  <li><strong>Plutus.V1.Ledger.Value:</strong> Enables safe inspection of ADA values
+    using <code>valueOf</code>.</li>
+</ul>
+
+<h3>Serialization and Cardano API</h3>
+<ul>
+  <li><strong>Codec.Serialise:</strong> Converts compiled validators into binary form.</li>
+  <li><strong>Cardano.Api &amp; Cardano.Api.Shelley:</strong> Used for generating
+    Bech32 addresses and writing standard <code>.plutus</code> JSON files.</li>
+</ul>
+
+<hr>
+
+<h2 id="2-data-structures">2. 🗃️ Data Structures</h2>
+
+<h3><code>StakingDatum</code></h3>
+<p>
+Represents the on-chain state of a staking position.
+</p>
+
+<ul>
+  <li><strong>sdStaker</strong>: The staker’s public key hash.</li>
+  <li><strong>sdPrincipal</strong>: Amount of ADA originally staked.</li>
+  <li><strong>sdStartTime</strong>: Timestamp when staking began.</li>
+  <li><strong>sdClaimedYield</strong>: Yield already withdrawn.</li>
+  <li><strong>sdActive</strong>: Indicates whether the stake is still active.</li>
+</ul>
+
+<h3><code>StakingAction</code></h3>
+<ul>
+  <li><strong>Stake</strong>: Validates creation or continuation of a stake.</li>
+  <li><strong>ClaimAndUnstake</strong>: Claims accrued yield and unlocks principal.</li>
+</ul>
+
+<hr>
+
+<h2 id="3-helper-functions">3. 🔧 Helper Functions</h2>
+
+<h3>Yield Calculation</h3>
+<p>
+The contract calculates yield based on:
+</p>
+<ul>
+  <li>Time elapsed since staking began</li>
+  <li>Annualized yield rate (5%)</li>
+  <li>Staked principal</li>
+</ul>
+
+<p>
+Yield is calculated safely using integer arithmetic to avoid floating-point errors.
+</p>
+
+<h3>Time Extraction</h3>
+<p>
+The function <code>getCurrentTime</code> extracts the upper bound of the transaction’s
+validity interval to determine the current on-chain time.
+</p>
+
+<hr>
+
+<h2 id="4-core-validator-logic">4. 🧠 Core Validator Logic</h2>
+
+<h3><code>mkValidator</code></h3>
+
+<p>The validator enforces two execution paths:</p>
+
+<h4>Stake</h4>
+<ul>
+  <li>Transaction must be signed by the staker</li>
+  <li>The stake must be marked as active</li>
+  <li>The principal must be greater than zero</li>
+</ul>
+
+<h4>ClaimAndUnstake</h4>
+<ul>
+  <li>Transaction must be signed by the staker</li>
+  <li>The stake must still be active</li>
+  <li>The staker must be paid the correct total amount (principal + yield)</li>
+</ul>
+
+<p>
+Incorrect behavior results in immediate script failure using <code>traceIfFalse</code>.
+</p>
+
+<hr>
+
+<h2 id="5-validator-script-compilation">5. ⚙️ Validator Script Compilation</h2>
+
+<p>
+The typed validator is wrapped into an untyped version using
+<code>BuiltinData</code>, allowing it to be executed on-chain.
+</p>
+
+<p>
+Template Haskell is then used to compile the validator into
+Plutus Core bytecode.
+</p>
+
+<hr>
+
+<h2 id="6-utility-functions">6. 🛠️ Utility Functions</h2>
+
+<ul>
+  <li><strong>plutusValidatorHash</strong>: Derives the validator hash directly from
+    the compiled script.</li>
+  <li><strong>plutusScriptAddress</strong>: Constructs a script address using the hash.</li>
+  <li><strong>toBech32ScriptAddress</strong>: Produces a user-friendly Bech32 address.</li>
+  <li><strong>writeValidator</strong>: Writes the validator to a standard
+    <code>.plutus</code> JSON file.</li>
+</ul>
+
+<hr>
+
+<h2 id="7-practical-usage-example">7. 🧪 Practical Usage Example</h2>
+
+<pre><code>-- Generate the validator
+cabal run
+
+-- Output file
+pgef-staking-vault.plutus
+
+-- Printed values
+Validator Hash (Plutus)
+Bech32 Script Address (Testnet)
+</code></pre>
+
+<hr>
+
+<h2 id="8-testing-strategy">8. 🧷 Testing Strategy</h2>
+
+<ul>
+  <li>Test staking with zero and non-zero principals.</li>
+  <li>Verify yield increases over time.</li>
+  <li>Ensure partial or incorrect payments fail validation.</li>
+  <li>Test invalid signatures and inactive stakes.</li>
+</ul>
+
+<hr>
+
+<h2 id="9-best-practices">9. ✅ Best Practices</h2>
+
+<ul>
+  <li>Always use integer math for financial calculations.</li>
+  <li>Validate value flows explicitly.</li>
+  <li>Log meaningful error messages using <code>traceIfFalse</code>.</li>
+  <li>Thoroughly test time-based edge cases.</li>
+</ul>
+
+<hr>
+
+<h2 id="10-glossary-of-terms">10. 📘 Glossary of Terms</h2>
+
+<table>
+  <tr><th>Term</th><th>Definition</th></tr>
+  <tr><td><strong>Staking</strong></td><td>Locking ADA to earn yield over time.</td></tr>
+  <tr><td><strong>Datum</strong></td><td>On-chain state governing validator behavior.</td></tr>
+  <tr><td><strong>Validator</strong></td><td>Script enforcing spending rules.</td></tr>
+  <tr><td><strong>POSIXTime</strong></td><td>Timestamp used for time-based logic.</td></tr>
+  <tr><td><strong>Yield</strong></td><td>Reward earned based on staking duration.</td></tr>
+  <tr><td><strong>Bech32</strong></td><td>Human-readable Cardano address format.</td></tr>
+</table>
+
+</body>
+</html>
